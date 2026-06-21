@@ -1,49 +1,79 @@
 #!/usr/bin/env python3
 """
-思源笔记导入脚本 — 自动检测思源状态、启动、导入 Markdown 文档。
+SiYuan note import script — auto-detect, launch, and import Markdown documents.
 
-用法:
+Usage:
     python import_siyuan.py --file "path/to/final.md"
-    python import_siyuan.py --markdown "markdown内容" --title "文档标题"
+    python import_siyuan.py --markdown "content" --title "Doc Title"
 
-输出 (stdout): {"success": true, "doc_id": "20240621...", "path": "/学习/2024-06-21"}
+Output (stdout): {"success": true, "doc_id": "20240621...", "path": "/notebook/2024-06-21"}
 
-也可作为模块导入:
+Importable:
     from import_siyuan import ensure_siyuan_running, import_markdown
     ensure_siyuan_running()
-    import_markdown(md_content, "标题")
+    import_markdown(md_content, "Title")
 """
 
-import sys, os, json, time, subprocess, argparse
+import sys, os, json, time, subprocess, argparse, platform
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
-# ── Config / 配置 ──────────────────────────────────────────────────────────
-_ENV_FILE = Path(__file__).resolve().parents[4] / "ZCodeProject" / "tools" / ".env"
-if _ENV_FILE.exists():
-    for _line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
-        _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line:
-            _k, _v = _line.split("=", 1)
-            _k, _v = _k.strip(), _v.strip().strip('"').strip("'")
-            if _k not in os.environ:
-                os.environ[_k] = _v
+
+# ── Config loading ─────────────────────────────────────────────────────────
+def _load_dotenv() -> None:
+    """Load .env from skill directory, cwd, or env vars (universal)."""
+    env_files = [
+        Path(__file__).resolve().parent.parent / ".env",   # <skill_dir>/.env
+        Path.cwd() / ".env",                                # cwd/.env
+    ]
+    for env_file in env_files:
+        if env_file.exists():
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k, v = k.strip(), v.strip().strip('"').strip("'")
+                    if k not in os.environ:
+                        os.environ[k] = v
+
+_load_dotenv()
 
 SIYUAN_API = os.environ.get("SIYUAN_API", "http://127.0.0.1:6806")
 SIYUAN_TOKEN = os.environ.get("SIYUAN_TOKEN", "")
-SIYUAN_STARTUP_WAIT = 15  # seconds
+SIYUAN_STARTUP_WAIT = int(os.environ.get("SIYUAN_STARTUP_WAIT", "15"))
 
-# 思源可能的安装路径
-SIYUAN_PATHS = [
-    r"D:\Program Files\siyuan\SiYuan.exe",
-    r"C:\Program Files\siyuan\SiYuan.exe",
-    r"D:\SiYuan\SiYuan.exe",
-]
+# Cross-platform SiYuan paths — override with SIYUAN_EXE env var
+_IS_WIN = platform.system() == "Windows"
+_IS_MAC = platform.system() == "Darwin"
+
+SIYUAN_PATHS: List[str] = []
+if _IS_WIN:
+    SIYUAN_PATHS = [
+        r"D:\Program Files\siyuan\SiYuan.exe",
+        r"C:\Program Files\siyuan\SiYuan.exe",
+        r"D:\SiYuan\SiYuan.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\siyuan\SiYuan.exe"),
+    ]
+elif _IS_MAC:
+    SIYUAN_PATHS = [
+        "/Applications/SiYuan.app/Contents/MacOS/SiYuan",
+        os.path.expanduser("~/Applications/SiYuan.app/Contents/MacOS/SiYuan"),
+    ]
+else:  # Linux
+    SIYUAN_PATHS = [
+        "/opt/siyuan/siyuan",
+        "/usr/bin/siyuan",
+        os.path.expanduser("~/.local/bin/siyuan"),
+    ]
 
 
 def find_siyuan_exe() -> Optional[Path]:
-    """查找思源可执行文件。"""
+    """Find SiYuan executable, respecting SIYUAN_EXE override."""
+    custom = os.environ.get("SIYUAN_EXE", "")
+    if custom and Path(custom).exists():
+        return Path(custom)
+
     for p in SIYUAN_PATHS:
         path = Path(p)
         if path.exists():
@@ -52,7 +82,7 @@ def find_siyuan_exe() -> Optional[Path]:
 
 
 def is_siyuan_running() -> bool:
-    """检测思源是否正在运行。"""
+    """Check if SiYuan is currently running."""
     import urllib.request, urllib.error
     try:
         req = urllib.request.Request(f"{SIYUAN_API}/api/system/version")
@@ -63,46 +93,48 @@ def is_siyuan_running() -> bool:
 
 
 def ensure_siyuan_running() -> bool:
-    """确保思源运行中：已运行返回True，否则启动并等待就绪。"""
+    """Ensure SiYuan is running; start it if not."""
     if is_siyuan_running():
         return True
 
     exe = find_siyuan_exe()
     if not exe:
-        print("⚠ 未找到思源安装路径", file=sys.stderr)
+        print("⚠ SiYuan executable not found. Set SIYUAN_EXE env var or install SiYuan.", file=sys.stderr)
         return False
 
-    print(f"🔧 正在启动思源笔记: {exe}", file=sys.stderr)
+    print(f"🔧 Starting SiYuan: {exe}", file=sys.stderr)
     try:
-        subprocess.Popen(
-            [str(exe)],
+        kwargs = dict(
             cwd=str(exe.parent),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
+        if _IS_WIN:
+            kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+
+        subprocess.Popen([str(exe)], **kwargs)
 
         for i in range(SIYUAN_STARTUP_WAIT):
             time.sleep(1)
             if is_siyuan_running():
-                print(f"✅ 思源已启动 (耗时 {i+1}s)", file=sys.stderr)
+                print(f"✅ SiYuan started (took {i+1}s)", file=sys.stderr)
                 return True
 
-        print(f"⚠ 思源启动超时 ({SIYUAN_STARTUP_WAIT}s)", file=sys.stderr)
+        print(f"⚠ SiYuan startup timed out ({SIYUAN_STARTUP_WAIT}s)", file=sys.stderr)
     except Exception as e:
-        print(f"⚠ 启动思源失败: {e}", file=sys.stderr)
+        print(f"⚠ Failed to start SiYuan: {e}", file=sys.stderr)
 
     return False
 
 
 def import_markdown(md_content: str, title: str = "",
                     notebook: str = "学习") -> Dict:
-    """导入 Markdown 到思源笔记。
+    """Import Markdown content to SiYuan.
 
     Args:
-        md_content: Markdown 内容
-        title: 文档标题（用于路径）
-        notebook: 笔记本名称，默认"学习"
+        md_content: Markdown content string
+        title: Document title (used in path)
+        notebook: Notebook name (default "学习")
 
     Returns:
         {"success": bool, "doc_id": str, "path": str, "error": str}
@@ -110,7 +142,6 @@ def import_markdown(md_content: str, title: str = "",
     import requests
 
     today = datetime.now().strftime("%Y-%m-%d")
-    safe_title = title or datetime.now().strftime("%H%M%S")
     notebook_path = f"/{today}"
 
     try:
@@ -146,16 +177,16 @@ def import_markdown(md_content: str, title: str = "",
 
 
 def import_file(file_path: str, notebook: str = "学习") -> Dict:
-    """从文件导入 Markdown 到思源。
+    """Import a Markdown file to SiYuan.
 
     Args:
-        file_path: Markdown 文件路径
-        notebook: 笔记本名称
+        file_path: Path to Markdown file
+        notebook: Notebook name
     """
     md_path = Path(file_path)
     if not md_path.exists():
         return {"success": False, "doc_id": "", "path": "",
-                "error": f"文件不存在: {file_path}"}
+                "error": f"File not found: {file_path}"}
 
     md_content = md_path.read_text(encoding="utf-8")
     title = md_path.stem
@@ -163,28 +194,28 @@ def import_file(file_path: str, notebook: str = "学习") -> Dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="思源笔记导入")
+    parser = argparse.ArgumentParser(description="SiYuan note import")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--file", help="Markdown 文件路径")
-    group.add_argument("--markdown", help="Markdown 文本内容")
-    parser.add_argument("--title", default="", help="文档标题")
-    parser.add_argument("--notebook", default="学习", help="笔记本名称 (默认: 学习)")
+    group.add_argument("--file", help="Path to Markdown file")
+    group.add_argument("--markdown", help="Markdown content string")
+    parser.add_argument("--title", default="", help="Document title")
+    parser.add_argument("--notebook", default="学习", help="Notebook name (default: 学习)")
     parser.add_argument("--no-start", action="store_true",
-                        help="不自动启动思源")
+                        help="Do not auto-start SiYuan")
     args = parser.parse_args()
 
-    # 确保思源运行
+    # Ensure SiYuan is running
     if not args.no_start:
         if not ensure_siyuan_running():
             print(json.dumps({
                 "success": False,
                 "doc_id": "",
                 "path": "",
-                "error": "思源笔记不可用：未安装或无法启动",
+                "error": "SiYuan unavailable: not installed or cannot start",
             }, ensure_ascii=False))
             sys.exit(1)
 
-    # 导入
+    # Import
     if args.file:
         md_content = Path(args.file).read_text(encoding="utf-8")
         title = args.title or Path(args.file).stem
@@ -196,9 +227,9 @@ def main():
     print(json.dumps(result, ensure_ascii=False))
 
     if result["success"]:
-        print(f"✅ 已导入思源: {result['path']}", file=sys.stderr)
+        print(f"✅ Imported to SiYuan: {result['path']}", file=sys.stderr)
     else:
-        print(f"⚠ 导入失败: {result['error']}", file=sys.stderr)
+        print(f"⚠ Import failed: {result['error']}", file=sys.stderr)
         sys.exit(1)
 
 

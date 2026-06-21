@@ -1,191 +1,188 @@
-# 平台提取参考
+# Platform Extraction Reference / 平台提取参考
 
-> 各平台的提取方法、Cookie 配置、降级策略和已知限制。
+> Per-platform extraction methods, cookie configuration, fallback strategies, and known limitations.
 
-## 目录
+## Table of Contents
 
-- [抖音 / TikTok](#douyin)
-- [B站 (Bilibili)](#bilibili)
-- [播客 / RSS](#podcast)
-- [本地音视频文件](#local)
-- [微信公众号](#wechat)
-- [小红书 (XHS)](#xiaohongshu)
+- [Douyin / TikTok](#douyin)
+- [Bilibili](#bilibili)
+- [Podcasts / RSS](#podcast)
+- [Local Audio/Video Files](#local)
+- [WeChat (Weixin)](#wechat)
+- [Xiaohongshu (XHS)](#xiaohongshu)
 - [YouTube](#youtube)
 
 ---
 
-## 抖音 / TikTok {#douyin}
+## Douyin / TikTok {#douyin}
 
-### 提取方法
+### Extraction Methods
 
-**方法 A（推荐）**：调用 tiktok-extract Skill
-```
-使用 Skill 工具调用 "tiktok-extract"，传入链接
-```
+**Method A (recommended)**: Use tiktok-extractor tool if available.
 
-**方法 B**：直接脚本
+**Method B**: Use `learn.py`:
 ```bash
-C:\Python312\python.exe C:\Users\Administrator\ZCodeProject\tools\douyin2md.py "<链接>" --out C:\Users\Administrator\ZCodeProject\learn-output
+python learn.py "<url>" --extract-only
 ```
 
-### 支持的链接格式
+### Supported Link Formats
 
-- `https://v.douyin.com/xxxxx/` — 短链接（最常见）
-- `https://www.douyin.com/video/xxxxx` — 视频页
-- `https://www.iesdouyin.com/share/video/xxxxx` — 分享链接
-- `https://www.douyin.com/user/xxx?modal_id=xxxxx` — 用户页视频
+- `https://v.douyin.com/xxxxx/` — Short link (most common)
+- `https://www.douyin.com/video/xxxxx` — Video page
+- `https://www.iesdouyin.com/share/video/xxxxx` — Share link
+- `https://www.douyin.com/user/xxx?modal_id=xxxxx` — User page video
+- `https://www.tiktok.com/@user/video/xxxxx` — TikTok
+- `https://vm.tiktok.com/xxxxx/` — TikTok short link
 
-### 输出
+### Output
 
-提取完成后，在 `learn-output/<id>/` 目录下：
-- `summary.md` — 元数据 + 转录文本
-- `video.mp4` — 无水印视频
-- `frames/` — 关键帧截图（如果使用 `--frames`）
+After extraction, in `learn-output/<id>/`:
+- `summary.md` — Metadata + transcript
+- `video.mp4` — Watermark-free video (douyin)
+- `frames/` — Keyframes (if `--frames` used)
 
-### 限制
+### Limitations
 
-- 需要有效的网络环境（B站通即可访问抖音）
-- 部分私密/删除视频无法提取
+- Requires network access to Douyin/TikTok servers
+- Private/deleted videos cannot be extracted
+- TikTok may be blocked in some regions
 
 ---
 
-## B站 (Bilibili) {#bilibili}
+## Bilibili {#bilibili}
 
-### 提取方法
+### Extraction Method
 
-统一入口：
 ```bash
-C:\Python312\python.exe C:\Users\Administrator\ZCodeProject\tools\learn.py "https://www.bilibili.com/video/BVxxxxxx"
+python learn.py "https://www.bilibili.com/video/BVxxxxxx" --extract-only
 ```
 
-### 提取流程（两阶段）
+### Extraction Flow (Two-stage)
 
-**阶段 1：字幕下载**
-- 使用 yt-dlp 下载官方字幕（优先中文 `zh-Hans, zh-CN, zh`）
-- 自动下载 AI 生成字幕作为兜底（`ai-zh`）
-- 字幕格式：SRT
+**Stage 1: Subtitle download**
+- Uses yt-dlp to download official subtitles (prefers `zh-Hans, zh-CN, zh, en`)
+- Auto-downloads AI-generated subtitles as fallback (`ai-zh`)
+- Subtitle format: SRT
 
-**阶段 2：Whisper 兜底**
-- 若无字幕，使用 hearsay whisper 模型进行音频转写
-- 命令：`python -m hearsay ingest "<url>" -o <dir>/hearsay.md --transcribe`
+**Stage 2: Whisper fallback**
+- If no subtitles available, uses whisper for audio transcription
+- Command: `python -m hearsay ingest "<url>" -o <dir>/hearsay.md --transcribe`
 
-### Cookie 配置（获取完整字幕）
+### Cookie Configuration (for full subtitle access)
 
-B站部分视频字幕需要登录 Cookie 才能获取。在 `tools/.env` 中配置：
+Some Bilibili videos require login cookies for subtitle access. Configure in `.env`:
 
 ```env
-# 方式1：完整 Cookie 字符串
+# Option 1: Full cookie string
 BILI_COOKIE="SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx; ..."
 
-# 方式2：仅 SESSDATA
+# Option 2: SESSDATA only
 BILI_SESSDATA="xxx"
 ```
 
-### 已知限制
+### Known Limitations
 
-- 会员专享视频无法提取
-- Cookie 过期需重新获取
-- 极长视频（>2h）字幕下载可能超时
+- Member-only videos cannot be extracted
+- Cookies expire and need refreshing
+- Very long videos (>2h) may timeout on subtitle download
 
 ---
 
-## 播客 / RSS {#podcast}
+## Podcasts / RSS {#podcast}
 
-### 提取方法
+### Extraction Method
 
-使用 hearsay：
+Using hearsay or equivalent tool:
 ```bash
-C:\Python312\python.exe -m hearsay ingest "<播客RSS链接>" -o C:\Users\Administrator\ZCodeProject\learn-output\podcast.md
+python -m hearsay ingest "<podcast_rss_url>" -o <output_dir>/podcast.md
 ```
 
-### 支持的格式
+### Supported Formats
 
-- RSS 2.0 / Atom feed
-- 标准播客 XML
-- 直接音频链接（.mp3, .m4a）
-- BBC Sounds、Apple Podcasts 链接
+- RSS 2.0 / Atom feeds
+- Standard podcast XML
+- Direct audio links (`.mp3`, `.m4a`)
+- BBC Sounds, Apple Podcasts links
 
-### 输出
+### Output
 
-- `podcast.md` — 标题、描述、章节、转录文本
+- `podcast.md` — Title, description, chapters, transcript
 
 ---
 
-## 本地音视频文件 {#local}
+## Local Audio/Video Files {#local}
 
-### 提取方法
+### Extraction Method
 
 ```bash
-C:\Python312\python.exe -m hearsay ingest "<文件路径>" -o C:\Users\Administrator\ZCodeProject\learn-output\local.md --transcribe
+python -m hearsay ingest "<file_path>" -o <output_dir>/local.md --transcribe
 ```
 
-### 支持的格式
+### Supported Formats
 
-- 视频：`.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`
-- 音频：`.mp3`, `.wav`, `.flac`, `.m4a`
+- Video: `.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`
+- Audio: `.mp3`, `.wav`, `.flac`, `.m4a`
 
-### 前提条件
+### Prerequisites
 
-- ffmpeg 已安装且可在 PATH 中找到
-- 默认路径：`C:\Tools\ffmpeg-8.1.1-essentials_build\bin`
+- ffmpeg installed and available in PATH
+- Install: `winget install Gyan.FFmpeg` (Windows), `brew install ffmpeg` (macOS), `apt install ffmpeg` (Linux)
 
-### 时间估算
+### Time Estimates
 
-- 1小时音频 → 约 5-10 分钟（取决于硬件）
-
----
-
-## 微信公众号 {#wechat}
-
-### 前置条件
-
-- Edge 浏览器（Chromium 内核）
-- feedgrab 工具已配置
-
-### 提取方法
-
-通过 Edge 浏览器使用 feedgrab 提取。需要浏览器 User Agent 配置。
-
-详见项目 `.env` 中的 feedgrab 配置。
-
-### 已知限制
-
-- 部分公众号文章需微信客户端内打开
-- 企业微信文章可能受限
-- 图片/富媒体内容可能丢失
+- 1 hour audio → ~5-10 minutes (hardware dependent)
 
 ---
 
-## 小红书 (XHS) {#xiaohongshu}
+## WeChat (Weixin) {#wechat}
 
-### 前置条件
+### Prerequisites
 
-- Edge 浏览器
-- feedgrab 工具
+- A Chromium-based browser (Edge or Chrome)
+- feedgrab tool configured
 
-### 已知限制
+### Extraction Method
 
-- 小红书反爬较强，成功率不高
-- 建议优先使用其他平台
+Use feedgrab with browser automation. Configure browser User-Agent in `.env`.
+
+### Known Limitations
+
+- Some articles require opening within the WeChat app
+- Enterprise WeChat articles may be restricted
+- Images/rich media may be lost
+
+---
+
+## Xiaohongshu (XHS) {#xiaohongshu}
+
+### Prerequisites
+
+- Chromium-based browser
+- feedgrab tool
+
+### Known Limitations
+
+- Strong anti-scraping measures, success rate varies
+- Consider using other platforms when possible
 
 ---
 
 ## YouTube {#youtube}
 
-### 国内状态
+### Availability
 
-**YouTube 在中国大陆被 GFW 封锁**，直连不可用。
+YouTube may be blocked in some network environments (e.g., mainland China).
 
-### 可用方案
+### Workarounds
 
-1. **代理**：配置 HTTP/HTTPS 代理后，yt-dlp 可正常工作
-2. **手动下载**：用代理下载视频或字幕文件，然后作为本地文件处理
-3. **B站搬运**：很多 YouTube 视频在 B站有搬运版
+1. **Proxy**: Configure HTTP/HTTPS proxy, then yt-dlp works normally
+2. **Manual download**: Download video/subtitle files via proxy, then process as local file
+3. **Alternative sources**: Check if the content exists on other platforms
 
-### 代理配置
+### Proxy Configuration
 
 ```env
-# 在 tools/.env 中设置
+# In .env file or environment
 HTTP_PROXY=http://127.0.0.1:7890
 HTTPS_PROXY=http://127.0.0.1:7890
 ```

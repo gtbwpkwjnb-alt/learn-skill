@@ -1,160 +1,165 @@
-# 故障排查
+# Troubleshooting / 故障排查
 
-> learn skill 常见问题及解决方案。
+> Common issues and solutions for the learn skill.
 
-## 目录
+## Table of Contents
 
-- [环境问题](#环境问题)
-- [提取问题](#提取问题)
-- [AI 分类/闪卡问题](#ai-分类闪卡问题)
-- [思源导入问题](#思源导入问题)
-- [常见错误码](#常见错误码)
+- [Environment Issues](#environment)
+- [Extraction Issues](#extraction)
+- [AI Classification / Flashcards](#ai)
+- [SiYuan Import Issues](#siyuan)
+- [Common Error Codes](#errors)
 
 ---
 
-## 环境问题
+## Environment Issues {#environment}
 
-### ffmpeg 未找到
+### ffmpeg not found
 
-**症状**：`❌ ffmpeg 未找到` 或 `'ffmpeg' is not recognized`
+**Symptom**: `ffmpeg: command not found` or `'ffmpeg' is not recognized`
 
-**解决**：
+**Solution**:
 ```bash
-# 确认安装
-dir "C:\Tools\ffmpeg-8.1.1-essentials_build\bin\ffmpeg.exe"
+# Check if installed
+which ffmpeg        # Linux/macOS
+where ffmpeg        # Windows
 
-# 如未安装，下载安装
-# https://www.gyan.dev/ffmpeg/builds/ → ffmpeg-release-essentials.zip
-# 解压到 C:\Tools\
+# Install if missing
+# Windows: winget install Gyan.FFmpeg
+#   Or download from https://www.gyan.dev/ffmpeg/builds/
+# macOS:   brew install ffmpeg
+# Linux:   sudo apt install ffmpeg
 ```
 
-### DeepSeek API 密钥未配置
+### DeepSeek API key not configured
 
-**症状**：`⚠ DEEPSEEK_API_KEY 未配置`
+**Symptom**: `⚠ DEEPSEEK_API_KEY not configured`
 
-**解决**：在 `C:\Users\Administrator\ZCodeProject\tools\.env` 添加：
+**Note**: This only matters for **CLI standalone mode**. When used as an AI skill, classification and flashcards are done by the AI model directly — no API key needed.
+
+**Solution** (CLI mode only): Add to `.env`:
 ```env
 DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 ```
 
-### 思源 Token 未配置
+### SiYuan Token not configured
 
-**症状**：思源导入 401 错误
+**Symptom**: SiYuan import returns 401 error
 
-**解决**：
-1. 打开思源 → 设置 → 关于 → API Token
-2. 复制 Token 到 `.env`：`SIYUAN_TOKEN=xxxxxxxx`
-
----
-
-## 提取问题
-
-### B站字幕下载失败
-
-**症状**：yt-dlp 报错，无字幕文件生成
-
-**排查步骤**：
-1. 确认 Cookie 有效 — 新开浏览器登录 B站，复制 Cookie 到 `.env`
-2. 确认视频存在 — 手动打开链接确认视频可播放
-3. 尝试 AI 字幕 — 在 B站网页端开启 AI 字幕后重试
-4. 降级到 Whisper — 脚本会自动切换到 hearsay whisper 转写
-
-### 抖音链接无法识别
-
-**症状**：`❌ 无法识别平台: ...`
-
-**检查**：
-- 确认链接包含 `douyin.com/video/`、`v.douyin.com/` 或 `iesdouyin.com/share/video/`
-- 确认不是 `tiktok.com` 链接（国际版需要不同处理）
-
-### hearsay 转写超时
-
-**症状**：hearsay 运行超过 15 分钟未完成
-
-**原因**：长音频 (1h+) Whisper 转写耗时长
-
-**解决**：
-- 等待完成（正常情况）
-- 如超时失败，手动分成短段落处理
-
-### YouTube 无法访问
-
-**症状**：`❌ YouTube 在当前网络环境不可用（需代理）`
-
-**解决**：
-1. 配置代理到 `.env`：`HTTP_PROXY=http://127.0.0.1:7890`
-2. 或在 B站搜索搬运视频
-3. 或手动下载后作为本地文件处理
+**Solution**:
+1. Open SiYuan → Settings → About → API Token
+2. Copy token to `.env`: `SIYUAN_TOKEN=xxxxxxxx`
 
 ---
 
-## AI 分类/闪卡问题
+## Extraction Issues {#extraction}
 
-### AI 分类结果不合理
+### Bilibili subtitle download failed
 
-**症状**：技术视频被分类为"美食"等明显错误
+**Symptom**: yt-dlp errors, no subtitle file generated
 
-**处理**：
-1. 重试一次（API 偶发不稳定）
-2. 手动指定分类（告知用户当前分类，让用户修正）
-3. 检查转录文本是否含噪声
+**Troubleshooting steps**:
+1. Verify cookie is valid — log into Bilibili in a browser, copy cookie to `.env`
+2. Verify video exists — open the link manually to confirm it plays
+3. Try AI subtitles — enable AI subtitles on Bilibili web player and retry
+4. Fallback to Whisper — the script auto-switches to whisper transcription
 
-### 闪卡内容与原文无关
+### Douyin link not recognized
 
-**症状**：生成的 Q&A 与视频主题不符
+**Symptom**: `❌ Unable to identify platform`
 
-**处理**：
-1. 丢弃当前闪卡结果
-2. 用更精准的转录片断重试
-3. 内容过短时跳过闪卡生成（自动检测 < 500 字）
+**Check**:
+- Confirm link contains `douyin.com/video/`, `v.douyin.com/`, or `iesdouyin.com/share/video/`
+- Confirm it's not a `tiktok.com` link (international version, different handling)
 
-### DeepSeek API 超时/报错
+### Transcription timeout
 
-**症状**：`⚠ AI 分类请求失败: ...` 或 HTTP 5xx
+**Symptom**: hearsay/whisper runs for >15 minutes without completing
 
-**处理**：
-1. 检查网络：`curl -s https://api.deepseek.com/v1/models`
-2. 检查 API 余额：登录 platform.deepseek.com
-3. API 不可用时跳过 AI 步骤，生成基础笔记
+**Cause**: Long audio (1h+) requires significant transcription time
+
+**Solution**:
+- Wait for completion (normal behavior)
+- If timeout fails, split into shorter segments manually
+
+### YouTube not accessible
+
+**Symptom**: Connection errors when accessing YouTube links
+
+**Solution**:
+1. Configure proxy in `.env`: `HTTP_PROXY=http://127.0.0.1:7890`
+2. Or download video manually and process as local file
 
 ---
 
-## 思源导入问题
+## AI Classification / Flashcards {#ai}
 
-### 思源无法启动
+### Classification result is wrong
 
-**症状**：`⚠ 未找到思源安装路径`
+**Symptom**: Tech video classified as "Cooking" etc.
 
-**解决**：
-1. 确认安装路径在 `SIYUAN_PATHS` 列表中
-2. 手动启动思源后再重试
-3. 或使用 `--no-start` 跳过自动启动
+**Handling**:
+1. Retry once (temporary API instability)
+2. Manually specify the correct category
+3. Check if transcript contains noise/garbage text
 
-### 思源启动后导入仍失败
+### Flashcards unrelated to content
 
-**症状**：思源已在运行，但 API 返回错误
+**Symptom**: Generated Q&A doesn't match video topic
 
-**排查**：
-1. 确认 Token 配置正确：`curl http://127.0.0.1:6806/api/system/version`
-2. 确认笔记本"学习"存在
-3. 查看思源日志（设置 → 关于 → 日志）
+**Handling**:
+1. Discard current flashcards and regenerate
+2. Use a more focused transcript segment
+3. Content too short → auto-skipped (< 500 chars)
 
-### 降级到本地保存
+### External API errors (CLI mode only)
 
-思源完全不可用时，笔记自动保存到：
+**Symptom**: `⚠ Classification request failed` or HTTP 5xx
+
+**Handling**:
+1. Check network: `curl -s https://api.deepseek.com/v1/models`
+2. Check API balance: visit platform.deepseek.com
+3. If API is down, skip AI steps and generate basic notes
+
+---
+
+## SiYuan Import Issues {#siyuan}
+
+### SiYuan won't start
+
+**Symptom**: `⚠ SiYuan executable not found`
+
+**Solution**:
+1. Verify installation path is in the search list
+2. Set `SIYUAN_EXE` env var to the correct path
+3. Start SiYuan manually, then retry
+4. Or use `--no-start` to skip auto-start
+
+### Import fails even when SiYuan is running
+
+**Symptom**: SiYuan is running but API returns errors
+
+**Troubleshooting**:
+1. Verify token: `curl http://127.0.0.1:6806/api/system/version`
+2. Confirm notebook exists
+3. Check SiYuan logs (Settings → About → Logs)
+
+### Fallback to local save
+
+When SiYuan is completely unavailable, notes are saved locally to:
 ```
-C:\Users\Administrator\ZCodeProject\learn-output\<slug>\final.md
+./learn-output/<slug>/final.md
 ```
 
 ---
 
-## 常见错误码
+## Common Error Codes {#errors}
 
-| 错误 | 含义 | 解决 |
-|------|------|------|
-| `❌ 无法识别平台` | 链接格式不支持 | 检查链接是否完整，确认平台是否在支持列表 |
-| `❌ 内容提取失败` | 提取步骤未生成输出 | 检查网络、Cookie、工具安装 |
-| `⚠ AI 分类失败` | DeepSeek API 调用异常 | 检查 API Key 和网络 |
-| `⚠ 闪卡生成失败` | DeepSeek API 调用异常或内容过短 | 短内容自动跳过，API 问题检查配置 |
-| `⚠ 思源 API 错误` | 思源导入接口返回错误 | 检查 Token 和笔记本配置 |
-| `⏭ 跳过(已处理)` | 重复链接 | 正常行为，去重机制生效 |
+| Error | Meaning | Solution |
+|-------|---------|----------|
+| `❌ Unable to identify platform` | Link format not supported | Check link format against supported platforms |
+| `❌ Content extraction failed` | Extraction produced no output | Check network, cookies, tool installation |
+| `⚠ Classification failed` | External API error (CLI mode) | Check API key and network |
+| `⚠ Flashcards failed` | External API error or content too short | Short content auto-skipped; check API config |
+| `⚠ SiYuan API error` | SiYuan import returned error | Check token and notebook config |
+| `⏭ Skipped (already processed)` | Duplicate link | Normal behavior — dedup working |

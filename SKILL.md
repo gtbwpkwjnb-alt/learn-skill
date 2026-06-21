@@ -1,20 +1,19 @@
 ---
 name: learn
-version: "3.1.0"
-description: "视频/音频/播客/文章链接 → 一键提取·AI分类·闪卡·思源笔记导入。支持抖音/B站/YouTube/小红书/微信/播客/本地文件。当用户提到学习、总结视频、记笔记、提取知识、做闪卡、视频笔记、播客转文字、learn、summarize video 时触发。"
+version: "3.2.0"
+description: "视频/音频/播客/文章链接 → 一键提取·AI分类·闪卡·知识库导入。支持抖音/B站/YouTube/小红书/微信/播客/本地文件。当用户提到学习、总结视频、记笔记、提取知识、做闪卡、视频笔记、播客转文字、learn、summarize video 时触发。"
 user-invocable: true
-allowed-tools: [Bash, Read, Write, Skill, Glob, Grep, WebFetch]
 ---
 
-# Learn / 学习 v3.1
+# Learn / 学习 v3.2
 
-> 一条命令：**任意链接 → 提取 → ZCode AI 分类 → 闪卡 → 思源导入**。8大平台，自动环境适配，全自动管线。
+> 一条命令：**任意链接 → 提取 → AI 分类 → 闪卡 → 知识库导入**。8大平台，自动适配，全自动管线。
 >
-> **设计原则**：AI 分析（分类、闪卡）由 ZCode 自身完成，无需额外 API 配置。外部工具只负责内容提取和导入。
+> **设计原则**：AI 分析（分类、闪卡）由当前 AI 模型直接完成，无需外部 API。外部工具只负责内容提取和文件导入。
 
 ## 触发条件
 
-用户消息包含以下**任一触发词+链接**时自动执行本技能：
+用户消息包含以下**任一触发词+链接**时自动执行：
 
 | 触发词 | 示例 |
 |--------|------|
@@ -34,22 +33,24 @@ allowed-tools: [Bash, Read, Write, Skill, Glob, Grep, WebFetch]
   ├─ 第一步：平台识别（8种正则）
   ├─ 第二步：按平台路由提取方法
   ├─ 第三步：读取提取结果（summary.md）
-  ├─ 第四步：ZCode 内联 AI 分类（你直接分析转录文本）
-  ├─ 第五步：ZCode 内联闪卡生成（你直接生成 Q&A）
+  ├─ 第四步：AI 分类（你直接分析转录文本，无需 API）
+  ├─ 第五步：闪卡生成（你直接生成 Q&A，无需 API）
   ├─ 第六步：组装标准化 Markdown（调用 assemble_md.py）
-  └─ 第七步：导入思源（调用 import_siyuan.py）
+  └─ 第七步：导入知识库（调用 import_siyuan.py，或本地保存）
 ```
 
 ## 平台路由表
 
-| 平台 | 提取方法 | 入口 | 详见 |
-|------|---------|------|------|
-| 抖音 / TikTok | tiktok-extract Skill | 调用 `Skill("tiktok-extract", url)` | `references/platforms.md#douyin` |
-| B站 | yt-dlp 字幕 → hearsay whisper 兜底 | `python tools/learn.py "<url>"` | `references/platforms.md#bilibili` |
-| 播客 / RSS | hearsay | `python -m hearsay ingest "<url>"` | `references/platforms.md#podcast` |
-| 本地音视频 | hearsay whisper 转写 | `python -m hearsay ingest "<path>" --transcribe` | `references/platforms.md#local` |
-| 微信 / 小红书 | feedgrab (需Edge浏览器) | 见 references | `references/platforms.md#wechat` |
-| YouTube | 国内被墙 | 提示用户使用代理 | `references/troubleshooting.md#youtube` |
+| 平台 | 提取方法 | 详见 |
+|------|---------|------|
+| 抖音 / TikTok | tiktok-extractor（见下方说明） | `references/platforms.md#douyin` |
+| B站 (Bilibili) | yt-dlp 字幕 → whisper 兜底 | `references/platforms.md#bilibili` |
+| 播客 / RSS | hearsay 或等效工具 | `references/platforms.md#podcast` |
+| 本地音视频 | whisper 转写 | `references/platforms.md#local` |
+| 微信 / 小红书 | feedgrab（需浏览器） | `references/platforms.md#wechat` |
+| YouTube | yt-dlp（可能需要代理） | `references/platforms.md#youtube` |
+
+> **抖音/TikTok 提取说明**：若有 tiktok-extractor 工具，优先使用。否则可用 yt-dlp 下载后本地 whisper 转写。
 
 ---
 
@@ -57,7 +58,7 @@ allowed-tools: [Bash, Read, Write, Skill, Glob, Grep, WebFetch]
 
 ### 步骤 1：平台识别
 
-用以下正则按优先级从上到下匹配：
+用以下正则按优先级从上到下匹配 URL：
 
 ```
 抖音:   (?:v\.douyin\.com|www\.douyin\.com/video|www\.iesdouyin\.com/share/video|douyin\.com/user/.*modal_id)
@@ -72,28 +73,32 @@ YouTube: (?:youtube\.com/watch|youtu\.be/)
 
 ### 步骤 2：内容提取
 
-**推荐方式** — 调用 `tools/learn.py` 仅提取（`--extract-only` 跳过 AI 步骤）：
+**推荐方式** — 调用 `learn.py`（仅提取模式）：
 
 ```bash
-C:\Python312\python.exe C:\Users\Administrator\ZCodeProject\tools\learn.py "<URL>" --extract-only --out C:\Users\Administrator\ZCodeProject\learn-output
+python learn.py "<URL>" --extract-only --out ./learn-output
 ```
 
-**按平台定制** — 详见 `references/platforms.md`。
+- `learn.py` 位于本技能目录下
+- `--extract-only` 跳过 AI 步骤，只做提取
+- 输出到 `./learn-output/`（可自定义）
+
+**备选方式** — 按平台手动提取，详见 `references/platforms.md`。
 
 ### 步骤 3：读取提取结果
 
-提取完成后，查找并读取输出目录中的 `summary.md`。从中解析：
+提取完成后，查找输出目录中的 `summary.md`。从中解析：
 - `title` — 标题
 - `platform` — 平台
 - `author` — 作者
 - `duration` — 时长
-- `transcript` — 转录文本（`## 📝 Transcript` section 之后的内容）
+- `transcript` — 转录文本（`## 📝 Transcript` 之后的内容）
 
-### 步骤 4：AI 分类（由你 — ZCode 自身完成）
+### 步骤 4：AI 分类（由你完成，无需外部 API）
 
-**你直接分析转录文本**，不需要调用外部 API。读取 transcript 内容后，根据以下指引输出分类结果：
+你直接分析转录文本输出分类结果：
 
-> 分析以下视频/音频内容的标题和前2000字转录，给出：
+> 分析以下内容的标题和前2000字转录，给出：
 > 1. 一个最合适的主题分类（10字以内，中文优先）
 > 2. 3-5个标签（中文或英文）
 >
@@ -105,13 +110,13 @@ C:\Python312\python.exe C:\Users\Administrator\ZCodeProject\tools\learn.py "<URL
 > {"category": "主题分类", "tags": ["标签1", "标签2", "标签3"]}
 > ```
 
-**质量自检**：分类结果是否与内容明显相关？若分类与内容风马牛不相及（如技术视频分为美食），重新审阅转录文本后再输出。
+**质量自检**：分类结果是否与内容明显相关？若分类与内容风马牛不相及，重新审阅转录文本后再输出。
 
-### 步骤 5：闪卡生成（由你 — ZCode 自身完成）
+### 步骤 5：闪卡生成（由你完成，无需外部 API）
 
-**快速路径判断**：转录文本 < 500 字 → 跳过闪卡生成（内容太短不适合做闪卡），直接进入步骤6。
+**快速路径判断**：转录文本 < 500 字 → 跳过闪卡生成，直接进入步骤6。
 
-**标准路径**（转录 ≥ 500 字）：你直接基于转录内容生成 5 张 Q&A 闪卡：
+**标准路径**（转录 ≥ 500 字）：基于转录内容生成 5 张 Q&A 闪卡：
 
 > 基于以下转录内容，生成5张问答闪卡。每张应测试对关键概念的理解，而非琐碎细节。
 > 问题要精准，答案要信息量大但简洁。
@@ -128,17 +133,19 @@ C:\Python312\python.exe C:\Users\Administrator\ZCodeProject\tools\learn.py "<URL
 
 ### 步骤 6：组装标准化 Markdown
 
-将分类结果和闪卡内容写入临时文件，然后调用 `assemble_md.py`：
+将分类结果和闪卡内容写入临时 JSON 文件，然后调用 `scripts/assemble_md.py`：
 
 ```bash
-C:\Python312\python.exe C:\Users\Administrator\.agents\skills\learn\scripts\assemble_md.py ^
-  --title "<标题>" --url "<原始链接>" --platform "<平台>" ^
-  --author "<作者>" --duration "<时长>" ^
-  --transcript-file "<transcript路径>" ^
-  --category "<分类>" --tags "<标签1>,<标签2>" ^
-  --flashcards-file "<闪卡JSON临时文件路径>" ^
-  --out "C:\Users\Administrator\ZCodeProject\learn-output\<slug>\final.md"
+python scripts/assemble_md.py \
+  --title "<标题>" --url "<原始链接>" --platform "<平台>" \
+  --author "<作者>" --duration "<时长>" \
+  --transcript-file "<transcript文件路径>" \
+  --category "<分类>" --tags "<标签1>,<标签2>" \
+  --flashcards-file "<闪卡JSON临时文件路径>" \
+  --out "./learn-output/<slug>/final.md"
 ```
+
+> **注意**：Windows 命令行用 `^` 换行，Linux/Mac 用 `\`。以上示例用 `\`。
 
 模板格式（中英双语）：
 
@@ -174,18 +181,19 @@ category: "{category}"
 **A1**: ...
 ```
 
-### 步骤 7：导入思源笔记
+### 步骤 7：导入知识库
+
+**优先目标 — 思源笔记**：
 
 ```bash
-C:\Python312\python.exe C:\Users\Administrator\.agents\skills\learn\scripts\import_siyuan.py --file "<final.md路径>"
+python scripts/import_siyuan.py --file "<final.md路径>"
 ```
 
-脚本自动：
-1. 检测思源是否运行
-2. 未运行则自动启动（查找已知安装路径）
-3. 等待就绪（最多 15 秒）
-4. POST 到 `/api/filetree/createDocWithMd`
-5. 导入失败时降级保存到本地 `learn-output/` 目录
+脚本自动：检测思源状态 → 未运行则启动 → 等待就绪 → 导入。
+
+**降级方案**：
+- Obsidian：复制到 Obsidian vault 目录
+- 本地 Markdown：保存到 `./learn-output/` 目录
 
 详见 `references/siyuan-api.md`。
 
@@ -197,7 +205,7 @@ C:\Python312\python.exe C:\Users\Administrator\.agents\skills\learn\scripts\impo
 ✅ 学习完成
 📄 标题: {title}
 🏷 分类: {category} | 标签: {tags}
-📥 思源: /学习/{today}/
+📥 目标: {import_target}
 🃏 闪卡: {count}张 (或 "跳过 - 内容过短")
 💾 本地: {local_path}
 ```
@@ -206,27 +214,31 @@ C:\Python312\python.exe C:\Users\Administrator\.agents\skills\learn\scripts\impo
 
 ## 配置
 
-### 技能模式（ZCode 内联 AI）— 零配置
+### 技能模式 — 零配置
 
-使用本技能时，AI 分类和闪卡生成由 ZCode 自身完成，**无需任何额外 API 配置**。
+作为 AI 技能使用时，分类和闪卡由 AI 模型直接完成，**无需额外 API 配置**。
 
-### 命令行模式（learn.py 独立运行）
+### 命令行独立运行模式
 
-如果你直接在命令行运行 `tools/learn.py`（而非通过技能），它需要 DeepSeek API 来做分类和闪卡。在 `tools/.env` 中配置：
+如果直接在命令行运行 `learn.py`（非技能模式），需要配置 `LEARN_SKILL_DIR/.env` 或环境变量：
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `DEEPSEEK_API_KEY` | DeepSeek API 密钥 | — |
+| `DEEPSEEK_API_KEY` | DeepSeek API 密钥（CLI AI 功能需要） | — |
 | `DEEPSEEK_BASE_URL` | API 地址 | `https://api.deepseek.com/v1` |
 | `SIYUAN_TOKEN` | 思源 API Token | — |
+| `SIYUAN_API` | 思源 API 地址 | `http://127.0.0.1:6806` |
+| `SIYUAN_EXE` | 思源可执行文件路径（覆盖自动查找） | — |
 | `BILI_COOKIE` | B站 Cookie（获取完整字幕） | — |
 | `OBSIDIAN_VAULT` | Obsidian 库路径（备选导入目标） | — |
+| `LEARN_OUTPUT_DIR` | 输出目录 | `./learn-output` |
+| `PYTHON_BIN` | Python 解释器路径 | `python` |
+
+> `.env` 文件查找顺序：技能目录 → 当前工作目录 → 环境变量。
 
 ---
 
 ## 参考文档
-
-按需读取以下文档：
 
 | 文档 | 内容 | 何时读取 |
 |------|------|---------|
