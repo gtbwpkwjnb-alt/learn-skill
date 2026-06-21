@@ -1,0 +1,28 @@
+# Environment / 环境配置
+.env
+
+# Output / 输出目录
+learn-output/
+output/
+
+# Python / Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS / 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temp / 临时文件
+*.tmp
+*.temp
