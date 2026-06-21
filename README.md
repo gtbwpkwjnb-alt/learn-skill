@@ -1,4 +1,4 @@
-# Learn Skill / 学习技能 v2.0
+# Learn Skill / 学习技能 v3.0
 
 > **One link → One knowledge card.** Paste any video/audio/podcast URL, get a structured note in your knowledge base — with AI-generated tags, category, and flashcards.
 >
@@ -6,15 +6,25 @@
 
 ---
 
+## 🆕 What's New in v3.0
+
+- 🧭 **Router pattern** — Platform detection → extraction routing → unified pipeline (no more monolithic instructions)
+- 🔒 **Zero hardcoded secrets** — All API keys in `.env`, references via environment variables
+- 📂 **Progressive disclosure** — L1 metadata, L2 SKILL.md body, L3 `scripts/` + `references/` on demand
+- 🪝 **Reusable scripts** — `classify.py`, `flashcards.py`, `import_siyuan.py`, `assemble_md.py` callable standalone
+- ✅ **Quality self-check** — AI classification shown for user confirmation before import
+- ⚡ **Fast-path** — Short content (<500 chars) skips flashcard generation
+- 📖 **Rich references** — `platforms.md`, `siyuan-api.md`, `troubleshooting.md`
+
 ## ✨ Features / 特性
 
-- 🌐 **Auto network detection** — Detects GFW, YouTube availability, Chrome presence / 自动检测国内外网络环境
-- 🔍 **Multi-platform support** — Douyin, TikTok, Bilibili, YouTube, podcasts, local files / 支持8个平台
+- 🌐 **Auto network detection** — Detects GFW, YouTube availability, browser presence / 自动检测国内外网络环境
+- 🔍 **Multi-platform support** — Douyin, TikTok, Bilibili, YouTube, podcasts, local files, WeChat, XHS / 支持8个平台
 - 📥 **Multi-engine extraction** — Captions-first strategy with Whisper fallback / 字幕优先+Whisper兜底
 - 🧹 **Smart text processing** — Dedup, fix all-caps, merge fragments, auto-segment / 去重、修正大写、合并片段、自动分段
-- 🏷 **AI classification** — DeepSeek-powered topic categorization + tags / DeepSeek 驱动主题分类
-- 🃏 **Flashcard generation** — Auto-generate 5 Q&A cards from content / 自动生成5张问答闪卡
-- 📤 **Dual import targets** — SiYuan (auto-launch!) + Obsidian + local markdown / 思源+Obsidian+本地
+- 🏷 **AI classification** — DeepSeek-powered topic categorization + tags with quality self-check / DeepSeek 驱动主题分类+质量自检
+- 🃏 **Flashcard generation** — Auto-generate 5 Q&A cards (fast-path skips short content) / 自动生成5张问答闪卡（短内容智能跳过）
+- 📤 **Triple import targets** — SiYuan (auto-launch!) + Obsidian + local markdown / 思源(自动启动)+Obsidian+本地
 - 📦 **Batch processing** — Multiple URLs in one command / 一次处理多个链接
 - 🔁 **Dedup protection** — Registry prevents re-processing / 注册表防重复处理
 - 📊 **Progress tracking** — Resume interrupted jobs / 断点续传
@@ -30,7 +40,7 @@
 python --version
 
 # 2. ffmpeg (required by all engines)
-# Windows: winget install Gyan.FFmpeg
+# Windows: download from https://www.gyan.dev/ffmpeg/builds/
 # macOS: brew install ffmpeg
 # Linux: apt install ffmpeg
 
@@ -38,16 +48,28 @@ python --version
 pip install hearsay yt-dlp requests
 ```
 
+### Configuration / 配置
+
+Copy `.env.example` to `tools/.env` and fill in:
+
+```env
+DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
+SIYUAN_TOKEN=xxxxxxxx
+# Optional:
+BILI_COOKIE=SESSDATA=xxx; ...
+OBSIDIAN_VAULT=D:/MyObsidianVault
+```
+
 ### Installation / 安装
 
 ```bash
 # Clone the skill
-git clone git@github.com:reasonix/learn-skill.git
+git clone git@github.com:gtbwpkwjnb-alt/learn-skill.git
 cd learn-skill
 
-# Or install as ZCode skill
-cp SKILL.md ~/.agents/skills/learn/
-cp learn.py ~/ZCodeProject/tools/
+# Install as ZCode skill (progressive disclosure structure)
+cp -r SKILL.md scripts/ references/ ~/.agents/skills/learn/
+cp learn.py douyin2md.py ~/ZCodeProject/tools/
 ```
 
 ### Usage / 使用
@@ -76,6 +98,19 @@ Send any link with a trigger word:
 学习 https://v.douyin.com/xxx/
 summarize video https://www.bilibili.com/video/BVxxx/
 extract this link https://example.com/podcast.xml
+做闪卡 https://www.bilibili.com/video/BVxxx/
+```
+
+Or use standalone scripts:
+```bash
+# AI classification only
+python scripts/classify.py --title "My Video" --summary-file transcript.txt
+
+# Flashcards only
+python scripts/flashcards.py --transcript-file transcript.txt
+
+# Import to SiYuan
+python scripts/import_siyuan.py --file final.md
 ```
 
 ---
@@ -87,9 +122,9 @@ extract this link https://example.com/podcast.xml
 | 抖音 Douyin | `v.douyin.com/*` | tiktok-extractor | ✅ | ✅ |
 | TikTok | `tiktok.com/*` | tiktok-extractor | ✅ | ✅ |
 | Bilibili 哔哩哔哩 | `bilibili.com/video/*` | yt-dlp + hearsay | ✅ | — |
-| YouTube | `youtube.com/*` | — | ❌ | ✅ |
+| YouTube | `youtube.com/*` | yt-dlp (proxy needed) | ❌ | ✅ |
 | Podcasts 播客 | `.xml` `.rss` | hearsay | ✅ | ✅ |
-| Local 本地文件 | `.mp4` `.mp3` `.wav` | hearsay | ✅ | ✅ |
+| Local 本地文件 | `.mp4` `.mp3` `.wav` | hearsay whisper | ✅ | ✅ |
 | WeChat 微信 | `mp.weixin.qq.com/*` | feedgrab (Edge) | ✅ | — |
 | Xiaohongshu 小红书 | `xiaohongshu.com/*` | feedgrab (Edge) | ✅ | — |
 
@@ -101,17 +136,40 @@ extract this link https://example.com/podcast.xml
 ## 🏗 Architecture / 架构
 
 ```
-URL Input → 🌐 Network Detect → 🔍 Platform Detect → 📥 Extract
-    ├── Douyin/TikTok → tiktok-extractor
+URL Input → 🌐 Network Detect → 🔍 Platform Detect → 📥 Extract (Router)
+    ├── Douyin/TikTok → tiktok-extractor Skill
     ├── Bilibili      → yt-dlp subtitles → hearsay whisper fallback
     ├── Podcast/Local → hearsay (captions-first → whisper)
-    └── Unavailable   → ❌ Error
+    └── Unavailable   → ❌ Filtered
          ↓
-🧹 Text Processing → 🏷 AI Classify → 🃏 Flashcards
+🧹 Text Processing → 🏷 AI Classify → ✅ Quality Check → 🃏 Flashcards
+         ↓                                    ↓
+    (short content <500 chars → skip flashcards)
          ↓
 📄 Standardized Markdown (YAML + bilingual headers)
          ↓
 📤 Import → SiYuan (auto-launch) / Obsidian / Local
+```
+
+### Directory Structure / 目录结构
+
+```
+learn/
+├── SKILL.md                 # Router pattern, ~250 lines
+├── scripts/                 # Reusable, standalone scripts
+│   ├── classify.py          # AI classification
+│   ├── flashcards.py        # Flashcard generation
+│   ├── import_siyuan.py     # SiYuan import + auto-launch
+│   └── assemble_md.py       # Markdown assembly
+├── references/              # On-demand documentation
+│   ├── platforms.md         # Per-platform extraction details
+│   ├── siyuan-api.md        # SiYuan API reference
+│   └── troubleshooting.md   # Common issues & fixes
+├── learn.py                 # Main orchestrator (~960 lines)
+├── douyin2md.py             # Douyin/TikTok wrapper
+├── requirements.txt
+├── .env.example
+└── README.md
 ```
 
 ### Output Template / 输出模板
@@ -141,7 +199,7 @@ category: "Technical Learning"
 - **Tags / 标签**: #AI #DeepLearning #Tutorial
 
 ## 📝 Transcript / 内容转录
-[Cleaned, segmented transcript with timestamps]
+[Cleaned, segmented transcript]
 
 ## 🃏 Flashcards / 闪卡
 **Q1**: What is the core concept of...?
@@ -150,35 +208,41 @@ category: "Technical Learning"
 
 ---
 
-## 🔧 Configuration / 配置
+## 🔧 Configuration Reference / 配置参考
 
-Add to `.env` file (optional):
+All sensitive config in `.env` (not committed):
 
-```bash
-# Bilibili Cookie for subtitle access / B站 Cookie 用于获取字幕
-BILI_COOKIE="SESSDATA=your_sessdata_here"
-
-# Obsidian vault path for export / Obsidian 库路径
-OBSIDIAN_VAULT="D:/MyObsidianVault"
-```
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DEEPSEEK_API_KEY` | DeepSeek API key | — |
+| `DEEPSEEK_BASE_URL` | API base URL | `https://api.deepseek.com/v1` |
+| `SIYUAN_TOKEN` | SiYuan API token | — |
+| `SIYUAN_API` | SiYuan API URL | `http://127.0.0.1:6806` |
+| `BILI_COOKIE` | Bilibili cookie (for full captions) | — |
+| `OBSIDIAN_VAULT` | Obsidian vault path (fallback target) | — |
 
 ---
 
 ## 📊 Comparison / 对比
 
-| Feature | learn v1.0 | learn v2.0 | BiliNote | VideoMemo |
+| Feature | learn v2.1 | learn v3.0 | BiliNote | VideoMemo |
 |---------|:--:|:--:|:--:|:--:|
 | Multi-platform | ✅ | ✅ | ✅ | ✅ |
-| Auto network detect | ❌ | ✅ | ❌ | ❌ |
-| SiYuan auto-launch | ❌ | ✅ | ❌ | ❌ |
-| Obsidian export | ❌ | ✅ | ❌ | ❌ |
-| Flashcard generation | ❌ | ✅ | ✅ | ✅ |
-| Dedup registry | ❌ | ✅ | ❌ | ❌ |
-| Batch processing | ❌ | ✅ | ✅ | ✅ |
-| Progress resume | ❌ | ✅ | ❌ | ❌ |
-| Bilingual output | ❌ | ✅ | ❌ | ❌ |
-| Bilibili Cookie | ❌ | ✅ | ❌ | ❌ |
-| Transcript cleaning | ❌ | ✅ | ❌ | ❌ |
+| Auto network detect | ✅ | ✅ | ❌ | ❌ |
+| SiYuan auto-launch | ✅ | ✅ | ❌ | ❌ |
+| Obsidian export | ✅ | ✅ | ❌ | ❌ |
+| Flashcard generation | ✅ | ✅ | ✅ | ✅ |
+| Flashcard fast-path | ❌ | ✅ | ❌ | ❌ |
+| Dedup registry | ✅ | ✅ | ❌ | ❌ |
+| Batch processing | ✅ | ✅ | ✅ | ✅ |
+| Progress resume | ✅ | ✅ | ❌ | ❌ |
+| Bilingual output | ✅ | ✅ | ❌ | ❌ |
+| Bilibili Cookie | ✅ | ✅ | ❌ | ❌ |
+| Transcript cleaning | ✅ | ✅ | ❌ | ❌ |
+| Progressive disclosure | ❌ | ✅ | ❌ | ❌ |
+| Quality self-check | ❌ | ✅ | ❌ | ❌ |
+| Reusable scripts | ❌ | ✅ | ❌ | ❌ |
+| Zero hardcoded secrets | ❌ | ✅ | ✅ | ✅ |
 | Web UI | ❌ | ❌ | ✅ | ✅ |
 
 ---
