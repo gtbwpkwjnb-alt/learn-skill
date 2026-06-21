@@ -160,7 +160,7 @@ def detect_network() -> NetworkEnv:
 # ═══════════════════════════════════════════════════════════════════════════
 
 PLATFORM_PATTERNS = {
-    "douyin":      [r"(?:v\.douyin\.com|www\.douyin\.com/video)"],
+    "douyin":      [r"(?:v\.douyin\.com|www\.douyin\.com/video|www\.iesdouyin\.com/share/video|douyin\.com/user/.*\bmodal_id=)"],
     "tiktok":      [r"(?:tiktok\.com|vm\.tiktok\.com)"],
     "bilibili":    [r"bilibili\.com/video/"],
     "youtube":     [r"(?:youtube\.com/watch|youtu\.be/)"],
