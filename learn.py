@@ -78,7 +78,7 @@ class NetworkEnv:
     bilibili_ok: bool = True       # Bilibili accessible? / B站可访问
     github_ok: bool = False        # GitHub HTTPS ok? / GitHub HTTPS 可访问
     jina_ok: bool = False          # Jina AI ok? / Jina AI 可访问
-    has_chrome: bool = False       # Chrome browser? / Chrome 浏览器
+    has_browser: bool = False       # Chrome/Edge browser? / 浏览器可用
     has_siyuan: bool = False       # SiYuan installed? / 思源已安装
     siyuan_running: bool = False   # SiYuan running? / 思源运行中
     obsidian_vault: str = ""       # Obsidian vault path / Obsidian 库路径
@@ -93,8 +93,8 @@ class NetworkEnv:
             "youtube":     "ok" if self.youtube_ok else "need_proxy",
             "podcast":     "ok",
             "local":       "ok",
-            "wechat":      "ok" if self.has_chrome else "need_chrome",
-            "xiaohongshu": "ok" if self.has_chrome else "need_chrome",
+            "wechat":      "ok" if self.has_browser else "need_browser",
+            "xiaohongshu": "ok" if self.has_browser else "need_browser",
         }
 
 
@@ -123,13 +123,25 @@ def detect_network() -> NetworkEnv:
     env.jina_ok = _check("https://r.jina.ai", 5)
     env.is_china = env.bilibili_ok and not env.youtube_ok
 
-    # Chrome / Chrome 检测
+    # Chrome/Chromium/Edge detection / 浏览器检测
     chrome_paths = [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
     ]
-    env.has_chrome = any(Path(p).exists() for p in chrome_paths)
+    env.has_browser = any(Path(p).exists() for p in chrome_paths)
+    if not env.has_browser:
+        # Also check for playwright/patchright Chromium / 检查playwright安装的Chromium
+        pw_dirs = [
+            os.path.expandvars(r"%LOCALAPPDATA%\ms-playwright"),
+            os.path.expandvars(r"%USERPROFILE%\.cache\ms-playwright"),
+        ]
+        for d in pw_dirs:
+            if Path(d).exists():
+                env.has_browser = True
+                break
 
     # SiYuan / 思源
     env.has_siyuan = any(Path(p).exists() for p in SIYUAN_PATHS)
@@ -771,8 +783,8 @@ def process_single(url: str, env: NetworkEnv, out_dir: Path,
     if status == "need_proxy":
         print(f"❌ {platform} 在当前网络环境不可用（需代理）")
         return False
-    if status == "need_chrome":
-        print(f"❌ {platform} 需要 Chrome 浏览器（当前未安装）")
+    if status == "need_browser":
+        print(f"❌ {platform} 需要浏览器（Edge/Chrome）→ 当前不可用，请安装 Edge 或 Chrome")
         return False
 
     print(f"\n{'='*60}")
@@ -793,7 +805,7 @@ def process_single(url: str, env: NetworkEnv, out_dir: Path,
             print("❌ YouTube 不可用，请使用代理")
             return False
         elif platform in ("wechat", "xiaohongshu"):
-            print(f"❌ {platform} 需要 Chrome 浏览器")
+            print(f"❌ {platform} 需要浏览器（Edge/Chrome），请安装后重试")
             return False
         elif platform in ("podcast", "local"):
             md_path = run_hearsay(url, out_dir, is_local=(platform == "local"))
@@ -914,7 +926,7 @@ def main():
     print(f"   国内网络: {'是' if env.is_china else '否'} | "
           f"YouTube: {'通' if env.youtube_ok else '堵'} | "
           f"B站: {'通' if env.bilibili_ok else '堵'} | "
-          f"Chrome: {'有' if env.has_chrome else '无'} | "
+          f"浏览器: {'有' if env.has_browser else '无'} | "
           f"思源: {'运行中' if env.siyuan_running else '已安装' if env.has_siyuan else '未安装'} | "
           f"Obsidian: {'已配置' if env.obsidian_vault else '未配置'}")
     print()

@@ -35,8 +35,8 @@ user-invocable: true
 | YouTube | `youtube.com/*` `youtu.be/*` | — | ❌ need proxy | ✅ |
 | Podcasts 播客 | `.xml` `.rss` | hearsay | ✅ | ✅ |
 | Local files 本地 | `.mp4` `.mp3` `.wav` `.mkv` | hearsay | ✅ | ✅ |
-| WeChat 微信 | `mp.weixin.qq.com/*` | feedgrab | ❌ need Chrome | ❌ |
-| Xiaohongshu 小红书 | `xiaohongshu.com/*` | feedgrab | ❌ need Chrome | ❌ |
+| WeChat 微信 | `mp.weixin.qq.com/*` | feedgrab (via Edge) | ✅ via Edge | — |
+| Xiaohongshu 小红书 | `xiaohongshu.com/*` | feedgrab (via Edge) | ✅ via Edge | — |
 
 > **Auto-detection**: The skill detects your network environment and automatically filters unavailable platforms.
 > **自动检测**: 技能自动检测网络环境，过滤不可用平台。

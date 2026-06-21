@@ -90,8 +90,8 @@ extract this link https://example.com/podcast.xml
 | YouTube | `youtube.com/*` | — | ❌ | ✅ |
 | Podcasts 播客 | `.xml` `.rss` | hearsay | ✅ | ✅ |
 | Local 本地文件 | `.mp4` `.mp3` `.wav` | hearsay | ✅ | ✅ |
-| WeChat 微信 | `mp.weixin.qq.com/*` | feedgrab | ❌ | ❌ |
-| Xiaohongshu 小红书 | `xiaohongshu.com/*` | feedgrab | ❌ | ❌ |
+| WeChat 微信 | `mp.weixin.qq.com/*` | feedgrab (Edge) | ✅ | — |
+| Xiaohongshu 小红书 | `xiaohongshu.com/*` | feedgrab (Edge) | ✅ | — |
 
 > Network environment is auto-detected. Unavailable platforms are filtered.
 > 网络环境自动检测，不可用平台自动过滤。
