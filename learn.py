@@ -764,7 +764,8 @@ def _write_temp_cookie(cookie: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def process_single(url: str, env: NetworkEnv, out_dir: Path,
-                   with_frames: bool = False, no_import: bool = False) -> bool:
+                   with_frames: bool = False, no_import: bool = False,
+                   extract_only: bool = False) -> bool:
     """Process a single URL / 处理单个链接"""
     task_id = hashlib.md5(url.encode()).hexdigest()[:12]
 
@@ -818,6 +819,11 @@ def process_single(url: str, env: NetworkEnv, out_dir: Path,
         return False
 
     save_progress(task_id, "extracted", {"output": str(md_path)})
+
+    # Extract-only mode: stop here, let ZCode handle AI steps / 仅提取模式
+    if extract_only:
+        print(f"✅ 提取完成 (extract-only) → {md_path}")
+        return True
 
     # Read content / 读取内容
     md_content = md_path.read_text(encoding="utf-8")
@@ -897,7 +903,7 @@ def main():
 
     # Parse flags / 解析参数
     urls = []
-    with_frames = False; no_import = False; dry_run = False; out_dir = DEFAULT_OUT
+    with_frames = False; no_import = False; dry_run = False; extract_only = False; out_dir = DEFAULT_OUT
 
     i = 1
     while i < len(sys.argv):
@@ -906,6 +912,8 @@ def main():
             with_frames = True
         elif a == "--no-import":
             no_import = True
+        elif a == "--extract-only":
+            extract_only = True
         elif a == "--dry-run":
             dry_run = True
         elif a == "--out" and i + 1 < len(sys.argv):
@@ -942,7 +950,7 @@ def main():
     # Process all URLs / 批量处理
     success = 0; fail = 0
     for url in urls:
-        if process_single(url, env, out_dir, with_frames, no_import):
+        if process_single(url, env, out_dir, with_frames, no_import, extract_only):
             success += 1
         else:
             fail += 1
