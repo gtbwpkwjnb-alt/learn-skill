@@ -16,13 +16,11 @@
 
 ## Douyin / TikTok {#douyin}
 
-### Extraction Methods
+### Extraction Method
 
-**Method A (recommended)**: Use tiktok-extractor tool if available.
-
-**Method B**: Use `learn.py`:
+Use the built-in `extract_douyin.py` (deep mode):
 ```bash
-python learn.py "<url>" --extract-only
+python scripts/extract_douyin.py "<url>" --frames --out ./learn-output
 ```
 
 ### Supported Link Formats
@@ -54,7 +52,7 @@ After extraction, in `learn-output/<id>/`:
 ### Extraction Method
 
 ```bash
-python learn.py "https://www.bilibili.com/video/BVxxxxxx" --extract-only
+yt-dlp --write-subs --sub-langs "zh-Hans,zh-CN,zh,en,ai-zh" "https://www.bilibili.com/video/BVxxxxxx"
 ```
 
 ### Extraction Flow (Two-stage)

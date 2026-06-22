@@ -1,6 +1,6 @@
 # Troubleshooting / 故障排查
 
-> Common issues and solutions for the learn skill.
+> Common issues and solutions for content extraction and import.
 
 ## Table of Contents
 
@@ -35,9 +35,9 @@ where ffmpeg        # Windows
 
 **Symptom**: `⚠ DEEPSEEK_API_KEY not configured`
 
-**Note**: This only matters for **CLI standalone mode**. When used as an AI skill, classification and flashcards are done by the AI model directly — no API key needed.
+**Note**: Classification, flashcards and summary are done by the AI model inline — no API key needed for normal use. Only relevant if running scripts standalone.
 
-**Solution** (CLI mode only): Add to `.env`:
+**Solution**: Add to `.env`:
 ```env
 DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 ```
@@ -92,7 +92,7 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 ---
 
-## AI Classification / Flashcards {#ai}
+## AI Classification / Flashcards / Summary
 
 ### Classification result is wrong
 
@@ -112,28 +112,27 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 2. Use a more focused transcript segment
 3. Content too short → auto-skipped (< 500 chars)
 
-### External API errors (CLI mode only)
+### AI output quality issues
 
-**Symptom**: `⚠ Classification request failed` or HTTP 5xx
+**Symptom**: Classification, summary or flashcards don't match content
 
 **Handling**:
-1. Check network: `curl -s https://api.deepseek.com/v1/models`
-2. Check API balance: visit platform.deepseek.com
-3. If API is down, skip AI steps and generate basic notes
+1. The model re-analyzes the transcript directly — no API involved
+2. If quality is low, retry once with a longer transcript excerpt
+3. Very short content (< 500 chars) auto-skips flashcard generation
 
 ---
 
-## SiYuan Import Issues {#siyuan}
+## KB Import Issues {#siyuan}
 
 ### SiYuan won't start
 
 **Symptom**: `⚠ SiYuan executable not found`
 
 **Solution**:
-1. Verify installation path is in the search list
-2. Set `SIYUAN_EXE` env var to the correct path
-3. Start SiYuan manually, then retry
-4. Or use `--no-start` to skip auto-start
+1. Set `SIYUAN_EXE` env var to the correct path
+2. Start SiYuan manually, then retry `kb_router.py`
+3. Force alternative target: `python scripts/kb_router.py --file "..." --force obsidian`
 
 ### Import fails even when SiYuan is running
 
@@ -146,7 +145,7 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 ### Fallback to local save
 
-When SiYuan is completely unavailable, notes are saved locally to:
+When no knowledge base is detected, notes are saved locally via `kb_router.py`:
 ```
 ./learn-output/<slug>/final.md
 ```
@@ -159,7 +158,6 @@ When SiYuan is completely unavailable, notes are saved locally to:
 |-------|---------|----------|
 | `❌ Unable to identify platform` | Link format not supported | Check link format against supported platforms |
 | `❌ Content extraction failed` | Extraction produced no output | Check network, cookies, tool installation |
-| `⚠ Classification failed` | External API error (CLI mode) | Check API key and network |
-| `⚠ Flashcards failed` | External API error or content too short | Short content auto-skipped; check API config |
+| `⚠ Missing dependencies` | ffmpeg/yt-dlp/tesseract not found | Run the install command provided in the error |
 | `⚠ SiYuan API error` | SiYuan import returned error | Check token and notebook config |
 | `⏭ Skipped (already processed)` | Duplicate link | Normal behavior — dedup working |

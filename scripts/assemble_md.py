@@ -9,7 +9,8 @@ Markdown 组装脚本 — 将所有组件拼接为标准化的学习笔记 Markd
       --transcript-file "path/to/transcript.txt" \
       --category "AI技术" --tags "AI,机器学习,教程" \
       --flashcards-file "path/to/flashcards.json" \
-      --out "path/to/output.md"
+      --summary "AI生成的3-5句摘要" \
+  --out "path/to/output.md"
 
 也可作为模块导入:
     from assemble_md import assemble
@@ -22,6 +23,11 @@ from datetime import datetime
 from typing import Optional, Dict, List
 
 # ── Constants / 常量 ────────────────────────────────────────────────────────
+
+SUMMARY_TEMPLATE = """## 💡 AI Summary / AI 总结
+
+{summary}
+"""
 
 MARKDOWN_TEMPLATE = """---
 title: "{title}"
@@ -44,6 +50,8 @@ category: "{category}"
 - **Extracted / 提取时间**: {extract_time}
 
 {classification_section}
+
+{summary_section}
 
 {transcript_section}
 
@@ -76,6 +84,7 @@ def assemble(
     tags: Optional[List[str]] = None,
     author: str = "",
     duration: str = "",
+    summary: str = "",
     flashcards: Optional[List[Dict[str, str]]] = None,
     flashcards_file: Optional[str] = None,
     out: Optional[str] = None,
@@ -92,6 +101,7 @@ def assemble(
         tags: 标签列表
         author: 作者
         duration: 时长
+        summary: AI 总结文本
         flashcards: 闪卡列表 (与 flashcards_file 二选一)
         flashcards_file: 闪卡 JSON 文件路径
         out: 输出文件路径（可选）
@@ -126,6 +136,9 @@ def assemble(
         tags_display=tags_display,
     )
 
+    # AI summary section
+    summary_section = SUMMARY_TEMPLATE.format(summary=summary) if summary else ""
+
     # 转录 section
     transcript_section = TRANSCRIPT_TEMPLATE.format(
         transcript=transcript if transcript else "_(待转录 / pending transcription)_"
@@ -153,6 +166,7 @@ def assemble(
         tags_yaml=tags_yaml,
         category=category,
         classification_section=classification_section,
+        summary_section=summary_section,
         transcript_section=transcript_section,
         flashcards_section=flashcards_section,
     )
@@ -175,6 +189,7 @@ def main():
     parser.add_argument("--duration", default="", help="时长 (HH:MM:SS)")
     parser.add_argument("--category", default="未分类", help="AI 分类")
     parser.add_argument("--tags", default="", help="标签 (逗号分隔)")
+    parser.add_argument("--summary", default="", help="AI 总结文本")
 
     transcript_group = parser.add_mutually_exclusive_group()
     transcript_group.add_argument("--transcript", default="", help="转录文本")
@@ -208,6 +223,7 @@ def main():
         tags=tags,
         author=args.author,
         duration=args.duration,
+        summary=args.summary,
         flashcards=flashcards,
         flashcards_file=args.flashcards_file or None,
         out=args.out,

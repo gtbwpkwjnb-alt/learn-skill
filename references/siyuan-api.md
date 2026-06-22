@@ -1,6 +1,6 @@
 # 思源笔记 API 参考
 
-> `import_siyuan.py` 和 `tools/learn.py` 使用的思源 API 接口说明。
+> `kb_router.py` 使用的思源 API 接口说明。`kb_router.py` 自动检测已安装知识库，思源优先。
 
 ## 基础信息
 
@@ -71,7 +71,7 @@ Content-Type: application/json
 
 ## 自动启动逻辑
 
-`import_siyuan.py` 的 `ensure_siyuan_running()` 函数执行以下逻辑：
+`kb_router.py` 的 `_ensure_siyuan_running()` 函数执行以下逻辑：
 
 ```
 1. GET /api/system/version (timeout=3s)

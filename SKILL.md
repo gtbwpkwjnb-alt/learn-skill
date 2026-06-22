@@ -1,56 +1,53 @@
 ---
 name: learn
-version: "3.2.0"
-description: "视频/音频/播客/文章链接 → 一键提取·AI分类·闪卡·知识库导入。支持抖音/B站/YouTube/小红书/微信/播客/本地文件。当用户提到学习、总结视频、记笔记、提取知识、做闪卡、视频笔记、播客转文字、learn、summarize video 时触发。"
+version: "3.4.0"
+description: 学习+链接 → 全自动采集·AI总结·深度OCR·入库
 user-invocable: true
 ---
 
-# Learn / 学习 v3.2
+# Learn / 学习 v3.3
 
-> 一条命令：**任意链接 → 提取 → AI 分类 → 闪卡 → 知识库导入**。8大平台，自动适配，全自动管线。
->
-> **设计原则**：AI 分析（分类、闪卡）由当前 AI 模型直接完成，无需外部 API。外部工具只负责内容提取和文件导入。
+> 一条链接 → 全自动管线：采集 → AI分析 → AI总结 → Markdown → 知识库。零配置，零手动，速度/深度自适应。
 
-## 触发条件
+## 触发规则
 
-用户消息包含以下**任一触发词+链接**时自动执行：
+用户消息含 **`学习`**（如"学习一下""帮我学习"）或 **`learn`** + 链接时自动触发。无链接则提示提供链接。独立词"总结"不触发本技能（走总结功能），互不干扰。
 
-| 触发词 | 示例 |
-|--------|------|
-| `学习` / `learn` | `学习 https://www.bilibili.com/video/BVxxx` |
-| `总结` / `summarize` | `总结这个视频 https://v.douyin.com/xxx/` |
-| `提取` / `extract` | `提取这个链接中的知识` |
-| `笔记` / `note` | `给这个视频做笔记` |
-| `闪卡` / `flashcard` | `给这篇内容生成闪卡` |
-| `转录` / `transcribe` | `把这个播客转成文字` |
-
-也接受直接贴链接说"处理这个"、"分析这个"等。
-
-## 快速决策树
+## 双速自适应决策树
 
 ```
 收到链接
-  ├─ 第一步：平台识别（8种正则）
-  ├─ 第二步：按平台路由提取方法
-  ├─ 第三步：读取提取结果（summary.md）
-  ├─ 第四步：AI 分类（你直接分析转录文本，无需 API）
-  ├─ 第五步：闪卡生成（你直接生成 Q&A，无需 API）
-  ├─ 第六步：组装标准化 Markdown（调用 assemble_md.py）
-  └─ 第七步：导入知识库（调用 import_siyuan.py，或本地保存）
+  ├─ 自判定模式（默认）：
+  │   ├─ 播客/RSS/微信/本地.mp3 → 快速（元数据+字幕，~30秒）
+  │   └─ 抖音/TikTok/B站/YouTube/本地.mp4 → 深度（元数据+字幕+关键帧+OCR，~3-10分）
+  ├─ 显式指定： "学习 快速 <链接>" 或 "学习 深度 <链接>"
+  ├─ 第1步：平台识别（正则匹配 URL）
+  ├─ 第2步：按平台路由提取命令
+  ├─ 第3步：读取提取结果（summary.md）
+  ├─ 第4步：AI 分类（你直接分析转录文本，无需 API）
+  ├─ 第5步：闪卡生成（转录≥500字），过短则跳过
+  ├─ 第6步：AI 总结（你生成 3-5 句摘要）
+  ├─ 第7步：组装标准化 Markdown（调用 scripts/assemble_md.py）
+  ├─ 第8步：导入知识库（调用 scripts/kb_router.py，自动检测）
+  └─ 第9步：汇报结果
 ```
 
-## 平台路由表
+## 平台 → 提取命令
 
-| 平台 | 提取方法 | 详见 |
-|------|---------|------|
-| 抖音 / TikTok | tiktok-extractor（见下方说明） | `references/platforms.md#douyin` |
-| B站 (Bilibili) | yt-dlp 字幕 → whisper 兜底 | `references/platforms.md#bilibili` |
-| 播客 / RSS | hearsay 或等效工具 | `references/platforms.md#podcast` |
-| 本地音视频 | whisper 转写 | `references/platforms.md#local` |
-| 微信 / 小红书 | feedgrab（需浏览器） | `references/platforms.md#wechat` |
-| YouTube | yt-dlp（可能需要代理） | `references/platforms.md#youtube` |
+| 平台 | 快速/深度 | 命令 |
+|------|-----------|------|
+| 抖音 | 深度 | `python scripts/extract_douyin.py <url> --frames` |
+| TikTok | 深度 | `python scripts/extract_douyin.py <url> --frames` |
+| B站 | 深度 | `yt-dlp --write-subs <url>` → whisper 兜底 |
+| YouTube | 深度 | `yt-dlp --write-subs <url>` → whisper 兜底 |
+| 播客/RSS | 快速 | `python -m hearsay ingest <url>` |
+| 微信/小红书 | 快速 | 浏览器打开 → 阅读全文 → 手动复制正文 |
+| 本地文件 | 自动 | `whisper <file> --model base` |
 
-> **抖音/TikTok 提取说明**：若有 tiktok-extractor 工具，优先使用。否则可用 yt-dlp 下载后本地 whisper 转写。
+> **环境检测**：执行前检查 ffmpeg / yt-dlp / whisper / tesseract。降级规则：
+> - 缺 tesseract → 跳过 OCR 和关键帧，继续转录
+> - 缺 yt-dlp → 尝试 `pip install yt-dlp`，失败则提示手动下载
+> - 缺 ffmpeg → 无法提取，报安装命令后终止
 
 ---
 
@@ -58,96 +55,72 @@ user-invocable: true
 
 ### 步骤 1：平台识别
 
-用以下正则按优先级从上到下匹配 URL：
+按优先级依次匹配 URL：
 
 ```
-抖音:   (?:v\.douyin\.com|www\.douyin\.com/video|www\.iesdouyin\.com/share/video|douyin\.com/user/.*modal_id)
+抖音:   (?:v\.douyin\.com|www\.douyin\.com/video|www\.iesdouyin\.com|douyin\.com/user/.*modal_id)
 TikTok: (?:tiktok\.com|vm\.tiktok\.com)
 B站:    bilibili\.com/video/
 YouTube: (?:youtube\.com/watch|youtu\.be/)
 微信:   mp\.weixin\.qq\.com
 小红书: xiaohongshu\.com
-播客:   \.(?:xml|rss)(?:\?|$)
+播客:   \.(?:xml|rss)(?:\?|$) | /feed/?$ | podcast
 本地:   \.(?:mp4|mkv|avi|mov|mp3|wav|flac|m4a|webm)$
 ```
 
 ### 步骤 2：内容提取
 
-**推荐方式** — 调用 `learn.py`（仅提取模式）：
+按上表命令执行提取。深度模式产物结构（`learn-output/<id>/`）：
 
-```bash
-python learn.py "<URL>" --extract-only --out ./learn-output
 ```
-
-- `learn.py` 位于本技能目录下
-- `--extract-only` 跳过 AI 步骤，只做提取
-- 输出到 `./learn-output/`（可自定义）
-
-**备选方式** — 按平台手动提取，详见 `references/platforms.md`。
+├── summary.md       ← 元数据+转录+关键帧引用+OCR文本
+├── transcript.txt
+├── video.mp4
+├── audio.wav
+└── frames/
+    ├── scene_001.jpg
+    ├── scene_002.jpg
+    └── ocr.txt
+```
 
 ### 步骤 3：读取提取结果
 
-提取完成后，查找输出目录中的 `summary.md`。从中解析：
-- `title` — 标题
-- `platform` — 平台
-- `author` — 作者
-- `duration` — 时长
-- `transcript` — 转录文本（`## 📝 Transcript` 之后的内容）
+从 `summary.md` 解析：`title`、`platform`、`author`、`duration`、`transcript`（`## 📝 Transcript` 之后内容）。
 
-### 步骤 4：AI 分类（由你完成，无需外部 API）
+### 步骤 4：AI 分类（由你完成）
 
-你直接分析转录文本输出分类结果：
+> 分析标题和前2000字转录，输出 JSON：
+> `{"category": "主题分类", "tags": ["标签1", "标签2"]}`
 
-> 分析以下内容的标题和前2000字转录，给出：
-> 1. 一个最合适的主题分类（10字以内，中文优先）
-> 2. 3-5个标签（中文或英文）
->
-> 标题: {title}
-> 转录前2000字: {transcript[:2000]}
->
-> 请用 JSON 格式回复，方便后续步骤解析：
-> ```json
-> {"category": "主题分类", "tags": ["标签1", "标签2", "标签3"]}
-> ```
+自检：分类与内容明显相关？是→继续，否→重审转录。
 
-**质量自检**：分类结果是否与内容明显相关？若分类与内容风马牛不相及，重新审阅转录文本后再输出。
+### 步骤 5：闪卡生成（由你完成）
 
-### 步骤 5：闪卡生成（由你完成，无需外部 API）
+转录≥500字 → 生成5张Q&A闪卡；<500字 → 跳过。
 
-**快速路径判断**：转录文本 < 500 字 → 跳过闪卡生成，直接进入步骤6。
+> 输出 JSON 数组：
+> `[{"q": "问题1", "a": "答案1"}, ...]`
 
-**标准路径**（转录 ≥ 500 字）：基于转录内容生成 5 张 Q&A 闪卡：
+自检：闪卡与原文相关？是→继续，否→重生成。
 
-> 基于以下转录内容，生成5张问答闪卡。每张应测试对关键概念的理解，而非琐碎细节。
-> 问题要精准，答案要信息量大但简洁。
->
-> 转录内容（前3000字）:
-> {transcript[:3000]}
->
-> 请用 JSON 数组格式回复：
-> ```json
-> [{"q": "问题1", "a": "答案1"}, {"q": "问题2", "a": "答案2"}, ...]
-> ```
+### 步骤 6：AI 总结（由你完成）
 
-**质量自检**：闪卡内容是否与原文相关？若明显无关则重新生成一次。
+> 基于转录内容，用中文生成 3-5 句精华摘要，突出核心观点和关键发现。
 
-### 步骤 6：组装标准化 Markdown
-
-将分类结果和闪卡内容写入临时 JSON 文件，然后调用 `scripts/assemble_md.py`：
+### 步骤 7：组装 Markdown
 
 ```bash
 python scripts/assemble_md.py \
-  --title "<标题>" --url "<原始链接>" --platform "<平台>" \
+  --title "<标题>" --url "<链接>" --platform "<平台>" \
   --author "<作者>" --duration "<时长>" \
-  --transcript-file "<transcript文件路径>" \
-  --category "<分类>" --tags "<标签1>,<标签2>" \
-  --flashcards-file "<闪卡JSON临时文件路径>" \
-  --out "./learn-output/<slug>/final.md"
+  --transcript-file "<transcript路径>" \
+  --category "<分类>" --tags "<tag1>,<tag2>" \
+  --flashcards-file "<闪卡JSON路径>" \
+  --summary "<AI总结文本>" \
+  --out "learn-output/<slug>/final.md"
 ```
 
-> **注意**：Windows 命令行用 `^` 换行，Linux/Mac 用 `\`。以上示例用 `\`。
-
-模板格式（中英双语）：
+模板（中英双语）：
 
 ```markdown
 ---
@@ -156,107 +129,53 @@ source: "{url}"
 platform: "{platform}"
 author: "{author}"
 duration: "{duration}"
-date: "{today}"
-tags: [{tags_json}]
+date: "{date}"
+tags: [{tags_yaml}]
 category: "{category}"
 ---
 
 # {title}
 
 ## 📋 Metadata / 元数据
-- **Platform / 平台**: ...
-- **Author / 作者**: ...
-- **Duration / 时长**: ...
-- **Source / 来源**: ...
+...
 
 ## 🤖 AI Classification / AI 分类
-- **Category / 主题**: ...
-- **Tags / 标签**: #tag1 #tag2 ...
+...
+
+## 💡 AI Summary / AI 总结
+{summary}
 
 ## 📝 Transcript / 内容转录
 ...
 
 ## 🃏 Flashcards / 闪卡
-**Q1**: ...
-**A1**: ...
+...
 ```
 
-### 步骤 7：导入知识库
-
-**优先目标 — 思源笔记**：
+### 步骤 8：导入知识库
 
 ```bash
-python scripts/import_siyuan.py --file "<final.md路径>"
+python scripts/kb_router.py --file "learn-output/<slug>/final.md"
 ```
 
-脚本自动：检测思源状态 → 未运行则启动 → 等待就绪 → 导入。
+自动检测已安装知识库（思源/Obsidian/Logseq/Trilium/Joplin/本地），优先尝试有 API 的，降级到文件复制，本地保存兜底。
+强制指定目标：`python scripts/kb_router.py --file "..." --force obsidian`
 
-**降级方案**：
-- Obsidian：复制到 Obsidian vault 目录
-- 本地 Markdown：保存到 `./learn-output/` 目录
-
-详见 `references/siyuan-api.md`。
-
-### 步骤 8：汇报结果
-
-向用户报告最终状态：
+### 步骤 9：汇报结果
 
 ```
-✅ 学习完成
-📄 标题: {title}
-🏷 分类: {category} | 标签: {tags}
-📥 目标: {import_target}
-🃏 闪卡: {count}张 (或 "跳过 - 内容过短")
-💾 本地: {local_path}
+✅ 学习完成 | 📄 {title} | 🏷 {category} | 📥 {import_target} | 🃏 {count}张 | 💾 本地路径
 ```
 
 ---
 
 ## 配置
 
-### 技能模式 — 零配置
-
-作为 AI 技能使用时，分类和闪卡由 AI 模型直接完成，**无需额外 API 配置**。
-
-### 命令行独立运行模式
-
-如果直接在命令行运行 `learn.py`（非技能模式），需要配置 `LEARN_SKILL_DIR/.env` 或环境变量：
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `DEEPSEEK_API_KEY` | DeepSeek API 密钥（CLI AI 功能需要） | — |
-| `DEEPSEEK_BASE_URL` | API 地址 | `https://api.deepseek.com/v1` |
-| `SIYUAN_TOKEN` | 思源 API Token | — |
-| `SIYUAN_API` | 思源 API 地址 | `http://127.0.0.1:6806` |
-| `SIYUAN_EXE` | 思源可执行文件路径（覆盖自动查找） | — |
-| `BILI_COOKIE` | B站 Cookie（获取完整字幕） | — |
-| `OBSIDIAN_VAULT` | Obsidian 库路径（备选导入目标） | — |
-| `LEARN_OUTPUT_DIR` | 输出目录 | `./learn-output` |
-| `PYTHON_BIN` | Python 解释器路径 | `python` |
-
-> `.env` 文件查找顺序：技能目录 → 当前工作目录 → 环境变量。
-
----
+参考 `.env.example`（技能目录下）。无需 `.env` 即可作为 AI 技能使用（分类/闪卡/总结由模型在线完成）。
 
 ## 参考文档
 
 | 文档 | 内容 | 何时读取 |
 |------|------|---------|
-| `references/platforms.md` | 各平台提取详情、Cookie 配置、降级策略 | 遇到特定平台问题时 |
-| `references/siyuan-api.md` | 思源笔记 API 参考、常见操作 | 思源导入失败时 |
-| `references/troubleshooting.md` | 常见问题排查、错误码对照 | 任何步骤出错时 |
-
-## 附录：平台正则速查
-
-```
-PLATFORM_PATTERNS = {
-    "douyin":      [r"v\.douyin\.com|douyin\.com/video|iesdouyin\.com/share/video|douyin\.com/user/.*modal_id"],
-    "tiktok":      [r"tiktok\.com|vm\.tiktok\.com"],
-    "bilibili":    [r"bilibili\.com/video/"],
-    "youtube":     [r"youtube\.com/watch|youtu\.be/"],
-    "wechat":      [r"mp\.weixin\.qq\.com"],
-    "xiaohongshu": [r"xiaohongshu\.com"],
-    "podcast":     [r"\.(?:xml|rss)(?:\?|$)", r"/feed/?$", r"podcast"],
-    "local":       [r"\.(?:mp4|mkv|avi|mov|mp3|wav|flac|m4a|webm)$"],
-}
-```
+| `references/platforms.md` | 各平台提取详情、降级策略 | 特定平台提取出错时 |
+| `references/siyuan-api.md` | 思源 API 参考 | 思源导入失败时 |
