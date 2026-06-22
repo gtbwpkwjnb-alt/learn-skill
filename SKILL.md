@@ -1,13 +1,15 @@
 ---
 name: learn
 version: "3.4.0"
-description: 学习+链接 → 全自动采集·AI总结·深度OCR·入库
+description: 学习+链接 → 全自动采集·AI总结·深度OCR·入库 | One link → AI analysis → KB import
 user-invocable: true
 ---
 
-# Learn / 学习 v3.3
+# Learn / 学习 v3.4
 
-> 一条链接 → 全自动管线：采集 → AI分析 → AI总结 → Markdown → 知识库。零配置，零手动，速度/深度自适应。
+> **一条链接 → 全自动知识卡片。** AI 分类 + 闪卡 + 总结 + 多知识库导入。双速自适应，零配置。
+>
+> **One link → one knowledge card.** AI classification, flashcards, summary, and multi-KB import. Dual-speed auto-adaptive, zero config.
 
 ## 触发规则
 
