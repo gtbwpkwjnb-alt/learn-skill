@@ -68,8 +68,6 @@ related: [{related_yaml}]{cover_frontmatter}
 
 {classification_section}
 
-{transcript_section}
-
 {chapter_summary_section}
 
 {knowledge_graph_section}
@@ -80,11 +78,6 @@ related: [{related_yaml}]{cover_frontmatter}
 CLASSIFICATION_TEMPLATE = """## 🤖 AI Classification / AI 分类
 - **Category / 主题**: {category}
 - **Tags / 标签**: {tags_display}
-"""
-
-TRANSCRIPT_TEMPLATE = """## 📝 Transcript / 内容转录
-
-{transcript}
 """
 
 FLASHCARDS_TEMPLATE = """## 🃏 Flashcards / 闪卡
@@ -324,10 +317,10 @@ def assemble(
     # Rating section
     rating_section = _build_rating(rating)
 
-    # 转录 section
-    transcript_section = TRANSCRIPT_TEMPLATE.format(
-        transcript=transcript if transcript else "_(待转录 / pending transcription)_"
-    )
+    # 转录 section（仅在 transcript 非空时输出）
+    transcript_section = ""
+    if transcript:
+        transcript_section = f"## 📝 Transcript / 内容转录\n\n{transcript}\n"
 
     # Chapter Summary section
     chapter_summary_section = _build_chapters(chapters)

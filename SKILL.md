@@ -92,8 +92,8 @@ YouTube: (?:youtube\.com/watch|youtu\.be/)
 按上表命令执行提取。深度模式产物结构（`learn-output/<id>/`）：
 
 ```
-├── summary.md       ← 元数据+转录+关键帧引用+OCR文本
-├── transcript.txt
+├── summary.md       ← 元数据+转录+关键帧引用+OCR文本（供AI分析，不入final.md）
+├── transcript.txt   ← 原始转录（AI内部使用，final.md 仅输出提炼后的知识点）
 ├── video.mp4
 ├── audio.wav
 └── frames/
@@ -102,9 +102,13 @@ YouTube: (?:youtube\.com/watch|youtu\.be/)
     └── ocr.txt
 ```
 
+> **输出原则**：final.md 仅包含 AI 提炼后的知识点（摘要/亮点/思考/术语/评分/图谱/闪卡/章节总结），**不含原始全文转录**，以控制输出体积和 API 成本。
+
 ### 步骤 3：读取提取结果
 
-从 `summary.md` 解析：`title`、`platform`、`author`、`duration`、`transcript`（`## 📝 Transcript` 之后内容）。如有封面图 URL 一并提取。
+从 `summary.md` 解析：`title`、`platform`、`author`、`duration`。如有封面图 URL 一并提取。
+
+> 注意：原始转录仅用于 AI 分析，不进入 final.md 最终输出。
 
 ### 步骤 4：AI 综合分析（单轮输出）
 
@@ -180,7 +184,6 @@ python scripts/assemble_md.py \
   --title "<标题>" --url "<链接>" --platform "<平台>" \
   --cover-image "<封面图URL>" \
   --author "<作者>" --duration "<时长>" \
-  --transcript-file "<transcript路径>" \
   --category "<分类>" --tags "<tag1>,<tag2>" \
   --summary "<AI总结文本>" \
   --highlights '<亮点JSON>' \
@@ -192,6 +195,8 @@ python scripts/assemble_md.py \
   --flashcards '<闪卡JSON>' \
   --out "learn-output/<slug>/final.md"
 ```
+
+> 注意：原始转录不入 final.md，仅作为 AI 分析阶段的输入。
 
 增强模板（中英双语，含全部 v3.5 新区域）：
 
@@ -255,9 +260,6 @@ graph LR
 ### [MM:SS] 🧩 章节标题
 ![截图](frames/scene_001.jpg)
 一段完整解释（50-150字），包含核心论点、类比/案例、定位...
-
-## 📝 Transcript / 内容转录
-...
 
 ## 🃏 Flashcards / 闪卡
 ...
