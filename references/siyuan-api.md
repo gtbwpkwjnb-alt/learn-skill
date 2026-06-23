@@ -8,7 +8,7 @@
 |------|-----|
 | 默认地址 | `http://127.0.0.1:6806` |
 | 认证方式 | `Authorization: Token <token>` |
-| Token 配置 | `tools/.env` 中的 `SIYUAN_TOKEN` |
+| Token 配置 | `.env`（技能根目录）中的 `SIYUAN_TOKEN` |
 | 消息格式 | JSON (POST) |
 
 ## 核心 API

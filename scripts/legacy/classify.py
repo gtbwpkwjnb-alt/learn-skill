@@ -12,11 +12,17 @@ Importable:
     from classify import classify_content
     result = classify_content("Title", "Summary...")
 
+╔══════════════════════════════════════════════════════════════╗
+║  DEPRECATED (v3.5): Classification now done by AI model     ║
+║  inline (zero config). This script is for CLI only.         ║
+╚══════════════════════════════════════════════════════════════╝
+
 Note: When used as an AI skill, classification is done by the AI model itself
 (inline, zero config). This script exists for standalone CLI usage.
 """
 
 import sys, os, json, re, argparse
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -43,6 +49,34 @@ _load_dotenv()
 DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 
+# ── Safety guard / 安全防护 ─────────────────────────────────────────────────
+MAX_API_CALLS_PER_DAY = 200       # 每日最大 API 调用次数
+API_CALL_LOG = (Path(__file__).resolve().parent.parent.parent / "learn-output" / ".api_call_legacy.json")
+
+
+def _check_legacy_api_safety() -> bool:
+    """Check daily API call budget / 检查每日 API 调用额度"""
+    if "LEARN_SKIP_SAFETY" in os.environ:
+        return True
+    today = datetime.now().strftime("%Y-%m-%d")
+    log_path = API_CALL_LOG
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log = {"daily": {}}
+    if log_path.exists():
+        try:
+            log = json.loads(log_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    log.setdefault("daily", {})
+    used = log["daily"].get(today, 0)
+    if used >= MAX_API_CALLS_PER_DAY:
+        print(f"⚠ 安全拦截：今日 API 调用已达上限 ({MAX_API_CALLS_PER_DAY})，设置 LEARN_SKIP_SAFETY=1 绕过",
+              file=sys.stderr)
+        return False
+    log["daily"][today] = used + 1
+    log_path.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
+    return True
+
 CLASSIFY_PROMPT = """Analyze this content and provide:
 1. A topic category (10 words max)
 2. 3-5 relevant tags
@@ -68,6 +102,9 @@ def classify_content(title: str, summary: str) -> Dict[str, any]:
 
     if not DEEPSEEK_KEY:
         print("⚠ DEEPSEEK_API_KEY not configured — using default classification", file=sys.stderr)
+        return {"category": "未分类", "tags": []}
+
+    if not _check_legacy_api_safety():
         return {"category": "未分类", "tags": []}
 
     prompt = CLASSIFY_PROMPT.format(title=title, summary=summary[:2000])
