@@ -141,7 +141,11 @@ def _build_highlights(data) -> str:
     for h in data if isinstance(data, list) else [data]:
         t = h.get("time", "")
         desc = h.get("description", str(h))
-        items.append(f"- **[{t}]** {desc}" if t else f"- {desc}")
+        ev = h.get("evidence", "")
+        line = f"- **[{t}]** {desc}" if t else f"- {desc}"
+        if ev:
+            line += f"\n  > {ev}"  # indent evidence quote
+        items.append(line)
     return HIGHLIGHTS_TEMPLATE.format(items="\n".join(items))
 
 
@@ -163,7 +167,11 @@ def _build_glossary(data) -> str:
     for g in data if isinstance(data, list) else [data]:
         term = g.get("term", "")
         definition = g.get("definition", str(g))
-        items.append(f"- **{term}**: {definition}" if term else f"- {definition}")
+        ev = g.get("evidence", "")
+        line = f"- **{term}**: {definition}" if term else f"- {definition}"
+        if ev:
+            line += f"\n  > *例：{ev}*"
+        items.append(line)
     return GLOSSARY_TEMPLATE.format(items="\n".join(items))
 
 
