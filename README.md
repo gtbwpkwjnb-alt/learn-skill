@@ -1,13 +1,17 @@
-# Learn Skill / 学习技能 v3.4
+# 知析 zhixi-learn v4.0
 
-> 一条链接 → 全自动管线：采集 → AI分析 → AI总结 → Markdown → 知识库
+> **Agent-Native Learning Pipeline.** One link → 1 unified AI call → hierarchical knowledge card with chapters, mindmap, highlights, glossary, flashcards → knowledge base import.
+>
+> **Agent 原生学习管道。** 一条链接 → 1 次统一 AI 调用 → 层级化知识卡片（章节分解+思维导图+亮点+术语+闪卡）→ 知识库导入。
+
+---
 
 ## 🚀 Quick Install / 快速安装
 
 ```bash
 git clone git@github.com:gtbwpkwjnb-alt/learn-skill.git
 cd learn-skill
-pip install yt-dlp faster-whisper scenedetect opencv-python pytesseract Pillow hearsay
+pip install yt-dlp faster-whisper hearsay requests
 ```
 
 ### 系统依赖
@@ -15,54 +19,102 @@ pip install yt-dlp faster-whisper scenedetect opencv-python pytesseract Pillow h
 | 工具 | 安装 |
 |------|------|
 | ffmpeg | `winget install Gyan.FFmpeg` / `brew install ffmpeg` / `apt install ffmpeg` |
-| tesseract (可选，深度OCR) | `winget install UB-Mannheim.TesseractOCR` / `brew install tesseract` / `apt install tesseract-ocr` |
+| Python 3.10+ | `python --version` 确认 |
+
+---
 
 ## ✨ Features / 特性
 
-- **双速自适应**：播客/本地mp3 → 快速（~30s）；抖音/B站/YouTube → 深度（含关键帧+OCR，~3-10min）
-- **8 平台支持**：抖音 · TikTok · B站 · YouTube · 播客 · 微信 · 小红书 · 本地文件
-- **自包含深度提取**：内置 `extract_douyin.py`，无需外部技能
-- **AI 全自动**：分类 + 闪卡 + 总结，由 AI 模型内联完成，零 API 配置
-- **多知识库导入**：自动检测思源/Obsidian/Logseq/Joplin/Trilium，本地保存兜底
+| 特性 | 说明 |
+|------|------|
+| 🌐 **网络自适应** | 自动检测 GFW，筛选可用平台 |
+| 🔍 **8 平台支持** | 抖音 · TikTok · B站 · YouTube · 播客 · 微信 · 小红书 · 本地文件 |
+| 📥 **字幕优先 + 离线兜底** | yt-dlp 字幕 + Whisper 本地转写 |
+| 🏗 **统一 AI 分析** | **1 次 API 调用**覆盖：分类+总结+章节+亮点+术语+闪卡+深度思考+评分 |
+| 📑 **层级化输出** | 章节分解 + Mermaid 思维导图 + 3段式总结 |
+| 📤 **双知识库导入** | 思源（自动启动）+ Obsidian + 本地 Markdown |
+| 📦 **管道化批处理** | 多链接批量处理 + 断点续传 + 去重保护 |
+| 🔒 **安全防护** | API 限流 + 费用追踪 + 批量确认 + 连续失败跳过 |
+
+---
 
 ## 🎯 Usage / 使用
 
 ### 作为 AI 技能
 
 ```
-学习 https://v.douyin.com/xxxxx/       ← 深度模式（自动）
-学习 快速 https://example.com/podcast  ← 强制快速
-学习一下这个视频 https://b23.tv/xxx     ← 宽容触发
+知析 https://www.bilibili.com/video/BV1GJ411x7h7
+zhixi https://v.douyin.com/xxxxx/
+学习一下这个视频 https://b23.tv/xxx
 ```
 
-### 独立脚本
+### 命令行
 
 ```bash
-# 深度提取（抖音/TikTok）
-python scripts/extract_douyin.py <url> --frames --out ./learn-output
+# 单条处理
+python zhixi-learn.py "https://www.bilibili.com/video/BV1GJ411x7h7"
 
-# 组装 Markdown
-python scripts/assemble_md.py \
-  --title "标题" --url "<链接>" --platform "bilibili" \
-  --transcript-file transcript.txt \
-  --category "分类" --tags "AI,教程" \
-  --summary "AI 总结文本" \
-  --out final.md
+# 批量处理
+python zhixi-learn.py "url1" "url2" "url3"
 
-# 导入知识库（自动检测）
-python scripts/kb_router.py --file final.md
-python scripts/kb_router.py --file final.md --force obsidian
+# 仅提取内容（跳过 AI 分析和导入）
+python zhixi-learn.py "url" --extract-only
+
+# 预览（dry-run）
+python zhixi-learn.py "url1" "url2" --dry-run
 ```
 
-## 📁 Structure / 目录结构
+---
+
+## 🏗 Architecture / 架构
+
+```
+URL → 🌐 Network Detect → 🔍 Platform Detect → 📥 Extract
+     ↓
+🧹 Text Processing → 🤖 Unified AI Analysis (1 API call)
+     ↓                    ├─ Category + Tags
+     ↓                    ├─ 3-paragraph Summary (TL;DR→Detail→Implications)
+     ↓                    ├─ Chapters (title + timestamp + points)
+     ↓                    ├─ Highlights + Glossary + Rating
+     ↓                    └─ Flashcards + Deep Questions
+     ↓
+📄 Hierarchical Markdown (Mermaid mindmap + all sections)
+     ↓
+📤 Import → SiYuan / Obsidian / Local
+```
+
+### 输出示例
+
+```markdown
+# 视频标题
+
+## 📊 快速概览
+[3段层级总结]
+## 🧭 内容结构
+[mermaid mindmap]
+## 📑 章节分解
+### 📍 章节1 ⏱ 00:00 — 要点...
+### 📍 章节2 ⏱ 05:30 — 要点...
+## ⭐ 核心亮点
+## 📚 关键术语
+## 🃏 复习闪卡
+## 🤔 深度思考
+## 🤖 AI 分类
+## 📝 完整转录
+```
+
+---
+
+## 📁 Directory Structure / 目录结构
 
 ```
 learn-skill/
-├── SKILL.md                    # 技能定义（177行）
+├── zhixi-learn.py             # 主入口（知析 v4.0）
+├── SKILL.md                   # 技能定义
 ├── scripts/
-│   ├── extract_douyin.py      # 深度提取管线（抖音/TikTok）
-│   ├── kb_router.py           # 知识库自动检测路由
-│   ├── assemble_md.py         # Markdown 组装
+│   ├── assemble_md.py         # Markdown 组装工具
+│   ├── extract_douyin.py      # 抖音/TikTok 提取管线
+│   ├── kb_router.py           # 知识库自动路由
 │   └── legacy/                # 旧版独立脚本
 ├── references/
 │   ├── platforms.md           # 平台提取详情
@@ -72,11 +124,34 @@ learn-skill/
 └── README.md
 ```
 
-## 🔧 Config / 配置
+---
 
-复制 `.env.example` 为 `.env`，按需填写（所有字段可选，AI 分类/闪卡/总结默认由模型内联完成）。
+## 🔧 Configuration / 配置
 
-关键变量：`SIYUAN_TOKEN`（思源导入）、`OBSIDIAN_VAULT`（Obsidian 路径）、`BILI_COOKIE`（B站字幕）。
+复制 `.env.example` 为 `.env`，填写必要变量：
+
+| 变量 | 必需 | 说明 |
+|------|:----:|------|
+| `DEEPSEEK_API_KEY` | ✅ | DeepSeek API 密钥（AI 分析必需） |
+| `SIYUAN_TOKEN` | ❌ | 思源 API token（导入思源时必需） |
+| `BILI_COOKIE` | ❌ | B站 Cookie（获取高质量字幕） |
+| `OBSIDIAN_VAULT` | ❌ | Obsidian 库路径 |
+
+---
+
+## 📊 v3 → v4 升级亮点
+
+| 改进 | v3 (learn) | v4 (zhixi-learn) |
+|------|:----------:|:----------------:|
+| API 调用次数 | 6 次串行 | **1 次统一** |
+| 章节分解 | ❌ | ✅ 带时间戳+要点 |
+| 思维导图 | ❌ | ✅ Mermaid |
+| 层级化总结 | ❌ | ✅ 3段式 |
+| 输出模板 | 平面 | **层级化** |
+| 测试覆盖 | ❌ | ✅ 35 项 pytest |
+| 代码可维护性 | 单函数 200+ 行 | **7 个辅助函数** |
+
+---
 
 ## 📄 License
 

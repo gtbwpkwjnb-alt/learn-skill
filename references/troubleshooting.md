@@ -121,6 +121,53 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 2. If quality is low, retry once with a longer transcript excerpt
 3. Very short content (< 500 chars) auto-skips flashcard generation
 
+### Highlights / Deep Thinking / Glossary generation failed
+
+**Symptom**: `⚠ 亮点生成失败` / `⚠ 深度思考生成失败` / `⚠ 术语生成失败`
+
+**Cause**: API call failure (timeout, rate limit, or parsing error)
+
+**Handling**:
+1. Check network connection and API key (`DEEPSEEK_API_KEY`)
+2. Retry — the script auto-retries up to 3 times with exponential backoff
+3. These are optional features — the document is still generated without them
+4. If consistently failing, check `.api_call_log.json` in `learn-output/` for details
+
+### API rate limit reached
+
+**Symptom**: `⚠ 安全拦截：今日 API 调用已达上限` or `⏳ 达每分钟上限`
+
+**Cause**: Exceeded safety limits (200 calls/day or 15 calls/minute)
+
+**Handling**:
+1. Wait until next day for daily limit reset
+2. Or set `LEARN_SKIP_SAFETY=1` in environment to bypass (not recommended)
+3. Check API call usage in `.api_call_log.json`
+4. Reduce batch size — each URL now uses up to 5 API calls (classify + highlights + deep thinking + glossary + rating + flashcards)
+
+### Consecutive failures auto-stop
+
+**Symptom**: `⚠ 连续失败 N 次，跳过后续 AI 步骤`
+
+**Cause**: 3+ consecutive API failures for the same URL
+
+**Handling**:
+1. Check network stability
+2. Verify API key is valid and has sufficient quota
+3. The script will continue processing remaining URLs
+4. The partially-processed document is still saved locally
+
+### Mermaid knowledge graph empty
+
+**Symptom**: Knowledge graph section shows no related notes
+
+**Cause**: No matching tags found in registry, or processing first content
+
+**Handling**:
+1. Normal for the first processed URL — graphs build up over time
+2. Ensure tags are being generated correctly (check classification output)
+3. Verify registry file exists at `learn-output/.registry.json`
+
 ---
 
 ## KB Import Issues {#siyuan}
@@ -161,3 +208,6 @@ When no knowledge base is detected, notes are saved locally via `kb_router.py`:
 | `⚠ Missing dependencies` | ffmpeg/yt-dlp/tesseract not found | Run the install command provided in the error |
 | `⚠ SiYuan API error` | SiYuan import returned error | Check token and notebook config |
 | `⏭ Skipped (already processed)` | Duplicate link | Normal behavior — dedup working |
+| `⚠ 安全拦截` | API call limit reached | Wait for reset or set `LEARN_SKIP_SAFETY=1` |
+| `⚠ 连续失败 N 次` | 3+ consecutive API failures | Check network & API key; continues to next URL |
+| `⏳ 达每分钟上限` | Per-minute rate limit hit | Auto-waits 60s then retries |

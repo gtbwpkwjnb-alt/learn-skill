@@ -12,11 +12,6 @@ Importable:
     from classify import classify_content
     result = classify_content("Title", "Summary...")
 
-╔══════════════════════════════════════════════════════════════╗
-║  DEPRECATED (v3.5): Classification now done by AI model     ║
-║  inline (zero config). This script is for CLI only.         ║
-╚══════════════════════════════════════════════════════════════╝
-
 Note: When used as an AI skill, classification is done by the AI model itself
 (inline, zero config). This script exists for standalone CLI usage.
 """
@@ -76,6 +71,7 @@ def _check_legacy_api_safety() -> bool:
     log["daily"][today] = used + 1
     log_path.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
     return True
+
 
 CLASSIFY_PROMPT = """Analyze this content and provide:
 1. A topic category (10 words max)
