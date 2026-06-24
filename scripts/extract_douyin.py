@@ -53,32 +53,49 @@ class FrameExtractionError(RuntimeError):
 # ── Preflight ────────────────────────────────────────────────────────────────
 
 _BASE_BINARIES = ("ffmpeg",)
-_FRAME_BINARIES = ("tesseract",)
+_FRAME_BINARIES = ()
+_OCR_BINARIES = ("tesseract",)
 _BASE_PYTHON_MODULES = ("yt_dlp",)
 
 
-def _check_dependencies(*, require_frames: bool) -> None:
-    """Verify all required system tools and Python modules are available."""
+def _check_dependencies(*, require_frames: bool, require_ocr: bool) -> tuple[list[str], list[str]]:
+    """Verify all required system tools and Python modules are available.
+    
+    Returns (missing_frame_deps, missing_ocr_deps) so callers can decide
+    whether to skip frames/OCR rather than hard-failing.
+    Raises MissingDependencyError only if CORE dependencies are missing.
+    """
     binaries = list(_BASE_BINARIES)
+    missing_frame: list[str] = []
+    missing_ocr: list[str] = []
+
     if require_frames:
-        binaries.extend(_FRAME_BINARIES)
+        for b in _FRAME_BINARIES:
+            if shutil.which(b) is None:
+                missing_frame.append(b)
+    if require_ocr:
+        for b in _OCR_BINARIES:
+            if shutil.which(b) is None:
+                missing_ocr.append(b)
 
     missing_bins = [b for b in binaries if shutil.which(b) is None]
     missing_mods = [
         m for m in _BASE_PYTHON_MODULES if importlib.util.find_spec(m) is None
     ]
-    missing = missing_bins + missing_mods
-    if missing:
+    missing_core = missing_bins + missing_mods
+    if missing_core:
         install_hints = {
             "ffmpeg": "winget install Gyan.FFmpeg | brew install ffmpeg | apt install ffmpeg",
             "tesseract": "winget install UB-Mannheim.TesseractOCR | brew install tesseract | apt install tesseract-ocr",
             "yt_dlp": "pip install yt-dlp",
         }
-        hints = [install_hints.get(m, f"pip install {m}") for m in missing]
+        hints = [install_hints.get(m, f"pip install {m}") for m in missing_core]
         raise MissingDependencyError(
-            f"Missing dependencies: {', '.join(missing)}.\n"
+            f"Missing core dependencies: {', '.join(missing_core)}.\n"
             f"Install: {' && '.join(hints)}"
         )
+
+    return missing_frame, missing_ocr
 
 
 # ── Downloader ───────────────────────────────────────────────────────────────
@@ -145,6 +162,34 @@ def _extract_audio(video_path: Path) -> Path | None:
             return None
         raise AudioExtractionError(f"ffmpeg failed: {stderr.strip()}")
     return audio_path
+
+
+def _extract_audio_from_source(audio_source_path: Path, output_wav: Path) -> Path:
+    """Extract 16kHz mono WAV from a separate audio source file (e.g. Douyin audio track)."""
+    cmd = ["ffmpeg", "-y", "-i", str(audio_source_path), "-ar", "16000", "-ac", "1", "-vn", str(output_wav)]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise AudioExtractionError(f"ffmpeg failed on audio source: {result.stderr.strip()}")
+    return output_wav
+
+
+def _merge_av(video_path: Path, audio_source_path: Path, output_path: Path) -> Path:
+    """Merge video and separate audio track into one file. Skips if output exists."""
+    if output_path.exists():
+        return output_path
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-i", str(audio_source_path),
+        "-c:v", "copy", "-c:a", "aac",
+        "-map", "0:v:0", "-map", "1:a:0",
+        str(output_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"⚠ Audio-video merge failed (non-fatal): {result.stderr.strip()[:200]}")
+        return video_path  # fallback to video-only
+    return output_path
 
 
 # ── Transcription (faster-whisper) ───────────────────────────────────────────
@@ -355,8 +400,20 @@ def write_summary(data: SummaryInput, out_path: Path) -> None:
 
 def run_pipeline(url: str, base_out_dir: Path, *, with_frames: bool) -> Path:
     """Run full extraction pipeline. Returns path to summary.md. Idempotent."""
-    _check_dependencies(require_frames=with_frames)
+    missing_frame, missing_ocr = _check_dependencies(
+        require_frames=with_frames, require_ocr=with_frames
+    )
     base_out_dir = Path(base_out_dir)
+
+    can_extract_frames = with_frames and not missing_frame
+    can_extract_ocr = with_frames and not missing_ocr
+
+    if missing_frame and with_frames:
+        print(f"⚠ scenedetect not found — skipping keyframe extraction")
+        print(f"  Install: pip install scenedetect")
+    if missing_ocr and with_frames:
+        print(f"⚠ tesseract not found — skipping OCR")
+        print(f"  Install: winget install UB-Mannheim.TesseractOCR")
 
     # Extract video ID from URL or resolve via yt-dlp
     match = re.search(r"/video/(\d+)", url)
@@ -374,7 +431,15 @@ def run_pipeline(url: str, base_out_dir: Path, *, with_frames: bool) -> Path:
     # Audio → transcribe
     audio_path = _extract_audio(result.video_path)
     if audio_path is None:
-        transcript = TranscriptResult(plain_text="", segments=[], language="")
+        print("⚠ No audio stream in video — checking for separate audio track...")
+        # Check if a separate audio file exists (Douyin/TikTok pattern)
+        audio_source = target_dir / "audio_source.mp4"
+        if audio_source.exists():
+            audio_path = _extract_audio_from_source(audio_source, target_dir / "audio.wav")
+        elif audio_path is None:
+            transcript = TranscriptResult(plain_text="", segments=[], language="")
+        else:
+            transcript = _transcribe(audio_path)
     else:
         transcript = _transcribe(audio_path)
 
@@ -382,14 +447,19 @@ def run_pipeline(url: str, base_out_dir: Path, *, with_frames: bool) -> Path:
     transcript_path.write_text(transcript.plain_text, encoding="utf-8")
     _write_srt(transcript.segments, target_dir / "transcript.srt")
 
-    # Frames + OCR (depth mode)
+    # Frames + OCR (depth mode, graceful degradation)
     frames: list[tuple[Path, float]] = []
     ocr_entries: list[tuple[float, str]] = []
-    if with_frames:
+    if can_extract_frames:
         frames_dir = target_dir / "frames"
         frames = _extract_keyframes(result.video_path, frames_dir)
-        ocr_entries = _ocr_frames(frames)
-        _write_ocr(ocr_entries, frames_dir / "ocr.txt")
+        if can_extract_ocr:
+            ocr_entries = _ocr_frames(frames)
+            _write_ocr(ocr_entries, frames_dir / "ocr.txt")
+        else:
+            print("  (OCR skipped — install tesseract to enable)")
+    else:
+        print("  (Keyframe extraction skipped — install scenedetect to enable)")
 
     # Relative frame paths
     relative_frames = [(p.relative_to(target_dir), ts) for p, ts in frames]
@@ -430,11 +500,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except DownloadError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"⚠ yt-dlp download failed: {exc}", file=sys.stderr)
+        print("  Tips for Douyin/TikTok:", file=sys.stderr)
+        print("  1. Fresh cookies needed: use Playwright fallback", file=sys.stderr)
+        print("     → python scripts/douyin_playwright_extract.py <url>", file=sys.stderr)
+        print("  2. Install browser_cookie3 to auto-extract cookies:", file=sys.stderr)
+        print("     → pip install browser_cookie3", file=sys.stderr)
         return 2
+    except AudioExtractionError as exc:
+        print(f"⚠ Audio extraction error: {exc}", file=sys.stderr)
+        print("  If this is a Douyin video, audio may be in a separate stream.", file=sys.stderr)
+        print("  Use the Playwright fallback script to capture both streams.", file=sys.stderr)
+        return 3
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
-        return 3
+        return 4
 
     print(f"Done: {summary_path}")
     return 0
