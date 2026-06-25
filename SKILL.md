@@ -1,7 +1,7 @@
 ---
-name: learn
-version: "3.6.0"
-description: 学习+链接 → 全自动采集·AI总结·亮点·术语·评分·图谱·深度OCR·入库 | One link → AI analysis+highlights+glossary+rating → KB import
+name: zhixi-learn
+version: "4.1.0"
+description: 学习+链接 → 全自动提取·AI结构化分析(1次调用)·章节总结·亮点·术语·闪卡·评分·导入思源 | learn+URL → AI structured analysis·chapters·highlights·flashcards·rating→SiYuan import
 user-invocable: true
 ---
 
@@ -123,7 +123,16 @@ else:
 
 ## 触发规则
 
-用户消息含 **`学习`**（如"学习一下""帮我学习"）或 **`learn`** + 链接时自动触发。无链接则提示提供链接。独立词"总结"不触发本技能（走总结功能），互不干扰。
+用户消息含 **`学习+`**、**`learn+`**、**`知析`**、**`zhixi`** 等关键词 + 分享链接时自动触发。无链接则提示提供链接。
+
+### 链接提取规则（去除杂项）
+
+抖音/TikTok 分享文本含大量杂项（时间戳、表情、话题标签、复制提示），按以下规则提取纯净 URL：
+
+1. 用正则 `https?://[a-zA-Z0-9./_-]+` 匹配消息中第一个 URL
+2. 检测是否是支持的平台域名：`douyin.com` / `tiktok.com` / `bilibili.com` / `youtube.com` / `iesdouyin.com`
+3. 不支持的 URL → 提示用户仅支持视频/音频链接
+4. 无 URL → 提示用户提供链接
 
 ## 前置条件
 
@@ -132,9 +141,9 @@ else:
 | 依赖 | 等级 | 用途 | 降级 |
 |------|------|------|------|
 | ffmpeg | 🔴 必需 | 音视频处理 | ❌ 无法继续，报安装命令后终止 |
-| yt-dlp | 🔴 必需 | 视频/字幕下载 | ⚠ `pip install yt-dlp` 尝试安装，失败则提示手动下载 |
+| playwright | 🔴 必需（抖音） | 浏览器自动化 → 网络拦截下载视频 | ⚠ `pip install playwright && playwright install chromium` |
 | faster-whisper | 🔴 必需 | 音频转录 | ⚠ `pip install faster-whisper` 尝试安装 |
-| playwright | 🟢 推荐 | 浏览器自动化（抖音 Cookie 兜底） | ⚠ 抖音平台缺失时播放受限，`pip install playwright && playwright install chromium` |
+| yt-dlp | 🟢 辅助 | B站/其他平台下载 | ⚠ `pip install yt-dlp` 尝试安装 |
 | tesseract | 🟡 深度模式 | OCR（屏幕文字识别） | ⚠ 跳过 OCR 和关键帧 |
 | scenedetect | 🟡 深度模式 | 关键帧提取 | ⚠ 跳过关键帧 |
 | browser_cookie3 | 🟢 推荐 | 从浏览器提取 Cookie | ⚠ 跳过浏览器 Cookie 方式，使用无 Cookie 降级 |
@@ -163,26 +172,29 @@ else:
   │   ├─ "详细点" → style=detailed（章节扩至100-150字）
   │   └─ 默认     → style=balanced
   ├─ 第1步：平台识别（正则匹配 URL）
-  ├─ 第2步：按平台路由提取命令（含多级兜底）
-  ├─ 第3步：读取提取结果（summary.md）
-  ├─ 第4步：AI 综合分析（Map 分段提取 → Reduce 合并 → Verify 二次验证）
-  ├─ 第5步：知识图谱（语义关联：核心概念词 + tags 交集）
-  ├─ 第6步：组装增强 Markdown（调用 scripts/assemble_md.py，含封面图+全部字段）
-  ├─ 第7步：导入知识库（调用 scripts/kb_router.py，自动检测）
-  ├─ 第8步：更新自进化状态（写入 .skill_state.json）
-  └─ 第9步：汇报结果（含降级/受限标注）
+  ├─ 第2步：URL 清洗（去除分享杂项，提取纯净链接）
+  ├─ 第3步：按平台路由提取：
+  │   ├─ 抖音 → `python tools/zhixi-learn.py <url> --no-import`  # Playwright网络拦截
+  │   ├─ B站  → `python tools/zhixi-learn.py <url> --no-import`
+  │   ├─ 本地 → `python tools/zhixi-learn.py <local_path> --no-import`
+  │   └─ 播客 → `python tools/zhixi-learn.py <url> --no-import`
+  ├─ 第4步：AI 综合分析（1次 DeepSeek 调用 → category/chapters/highlights/glossary/flashcards/rating）
+  ├─ 第5步：知识图谱（语义关联：tags 交集匹配已有笔记）
+  ├─ 第6步：组装增强 Markdown（关键帧截图 + 层级模板）
+  ├─ 第7步：导入思源/Obsidian（调用 import_to_siyuan）
+  └─ 第8步：汇报结果（含评分和链接）
 ```
 
 ## 平台 → 提取命令（含多级兜底）
 
-| 平台 | 深度模式 | 主命令 | 一级兜底 | 二级兜底 |
-|------|---------|--------|---------|---------|
-| 抖音 | 深度 | `python scripts/extract_douyin.py <url> --frames` | yt-dlp cookie 失败 → playwright 拦截 + requests 下载 | 音视频分离 → ffmpeg 合并 |
-| TikTok | 深度 | `python scripts/extract_douyin.py <url> --frames` | 同上 | 同上 |
-| B站 | 深度 | `yt-dlp --write-subs <url>` | 无字幕 → whisper 转录 | — |
-| YouTube | 深度 | `yt-dlp --write-subs <url>` | 无字幕 → whisper 转录 | 被墙 → 提示配置代理 |
-| 播客/RSS | 快速 | `python -m hearsay ingest <url>` | — | — |
-| 微信 | 快速 | `python scripts/extract_webpage.py <url>` | feedgrab 兜底 | — |
+| 平台 | 模式 | 主命令 | 兜底 |
+|------|------|--------|------|
+| 抖音 | 深度 | `python tools/zhixi-learn.py <url>` | Playwright 网络拦截 → 下载 → whisper |
+| TikTok | 深度 | `python tools/zhixi-learn.py <url>` | 同上 |
+| B站 | 深度 | `python tools/zhixi-learn.py <url>` | yt-dlp → whisper |
+| YouTube | 深度 | 被墙，提示配置代理 | — |
+| 播客 | 快速 | `python tools/zhixi-learn.py <url>` | hearsay 提取 |
+| 本地文件 | 快速 | `python tools/zhixi-learn.py <path>` | — |
 | 小红书 | 快速 | `python scripts/extract_webpage.py <url>` | feedgrab 兜底 | — |
 | 通用网页 | 快速 | `python scripts/extract_webpage.py <url>` | readability + markdownify | — |
 | 本地文件 | 自动 | `whisper <file> --model base` | — | — |
