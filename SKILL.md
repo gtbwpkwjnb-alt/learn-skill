@@ -1,7 +1,7 @@
 ---
 name: zhixi-learn
 version: "4.1.0"
-description: 学习+链接 → 全自动提取·AI结构化分析(1次调用)·章节总结·亮点·术语·闪卡·评分·导入思源 | learn+URL → AI structured analysis·chapters·highlights·flashcards·rating→SiYuan import
+description: 学习+链接 → 全自动提取·AI结构化分析(1次调用)·章节总结·亮点·术语·闪卡·评分·导入思源
 user-invocable: true
 ---
 
@@ -24,12 +24,12 @@ user-invocable: true
 ```bash
 # 检测内容
 ffmpeg  → 音视频处理          [必要 | 无可降级]
-yt-dlp  → 视频/字幕下载       [必要 | pip install 尝试]
-playwright → 浏览器自动化      [推荐 | pip install playwright && playwright install chromium]
-faster-whisper → 音频转录      [必要 | pip install faster-whisper]
-scenedetect → 关键帧提取       [深度可选 | pip install scenedetect]
-tesseract → OCR                [深度可选 | winget install UB-Mannheim.TesseractOCR]
-browser_cookie3 → 浏览器Cookie [辅助可选 | pip install browser_cookie3]
+yt-dlp  → 视频/字幕下载       [必要
+playwright → 浏览器自动化      [推荐
+faster-whisper → 音频转录      [必要
+scenedetect → 关键帧提取       [深度可选
+tesseract → OCR                [深度可选
+browser_cookie3 → 浏览器Cookie [辅助可选
 python    → Python 解释器路径   [必要]
 ```
 
@@ -144,8 +144,8 @@ else:
 | ffmpeg | 🔴 必需 | 音视频处理 | ❌ 无法继续，报安装命令后终止 |
 | playwright | 🔴 必需（抖音） | 浏览器自动化 → 网络拦截下载视频 | ⚠ `pip install playwright && playwright install chromium` |
 | faster-whisper | 🔴 必需 | 音频转录 | ⚠ `pip install faster-whisper` 尝试安装 |
-| yt-dlp | 🟢 辅助 | B站/其他平台下载 | ⚠ `pip install yt-dlp` 尝试安装 |
-| tesseract | 🟡 深度模式 | OCR（屏幕文字识别） | ⚠ 跳过 OCR 和关键帧 |
+| yt-dlp | 🟢 辅助
+| tesseract | 🟡 深度模式
 | scenedetect | 🟡 深度模式 | 关键帧提取 | ⚠ 跳过关键帧 |
 | browser_cookie3 | 🟢 推荐 | 从浏览器提取 Cookie | ⚠ 跳过浏览器 Cookie 方式，使用无 Cookie 降级 |
 
@@ -234,7 +234,7 @@ B站:    bilibili\.com/video/
 YouTube: (?:youtube\.com/watch|youtu\.be/)
 微信:   mp\.weixin\.qq\.com
 小红书: xiaohongshu\.com
-播客:   \.(?:xml|rss)(?:\?|$) | /feed/?$ | podcast
+播客:   \.(?:xml|rss)(?:\?|$) | /feed/?$
 本地:   \.(?:mp4|mkv|avi|mov|mp3|wav|flac|m4a|webm)$
 ```
 
