@@ -45,6 +45,8 @@ tags: [{tags_yaml}]
 category: "{category}"
 rating: {rating}
 related: [{related_yaml}]
+task_id: "{task_id}"
+pipeline_version: "{pipeline_version}"
 ---
 
 # {title}
@@ -187,6 +189,8 @@ def assemble(
     related_notes: Optional[List[Dict[str, str]]] = None,
     flashcards: Optional[List[Dict[str, str]]] = None,
     flashcards_file: Optional[str] = None,
+    task_id: str = "",
+    pipeline_version: str = "5.0",
     out: Optional[str] = None,
 ) -> str:
     """组装增强版学习笔记 Markdown。
@@ -260,6 +264,8 @@ def assemble(
                 hl_lines.append(f"- **[{time_str}]** {text}")
             else:
                 hl_lines.append(f"- {text}")
+            if h.get("evidence"):
+                hl_lines.append(f"  > 证据：{h['evidence']}")
         highlights_section = HIGHLIGHTS_TEMPLATE.format(
             highlights="\n".join(hl_lines)
         )
@@ -272,6 +278,8 @@ def assemble(
             q = dt.get("q", "?")
             a = dt.get("a", "?")
             dt_lines.append(f"**Q{i}:** {q}\n\n**A{i}:** {a}\n")
+            if dt.get("evidence"):
+                dt_lines.append(f"> 证据：{dt['evidence']}\n")
         deep_thinking_section = DEEP_THINKING_TEMPLATE.format(
             thinking="\n".join(dt_lines)
         )
@@ -284,6 +292,8 @@ def assemble(
             term = g.get("term", g.get("t", ""))
             definition = g.get("definition", g.get("d", ""))
             gl_lines.append(f"- **{term}**: {definition}")
+            if g.get("evidence"):
+                gl_lines.append(f"  > 证据：{g['evidence']}")
         glossary_section = GLOSSARY_TEMPLATE.format(
             glossary="\n".join(gl_lines)
         )
@@ -322,13 +332,15 @@ def assemble(
         for ch in chapters:
             ch_time = ch.get("time", "")
             ch_title = ch.get("title", "")
-            ch_text = ch.get("text", "")
+            ch_text = ch.get("text", ch.get("summary", ""))
             ch_screenshot = ch.get("screenshot", "")
             ch_lines.append(f"### [{ch_time}] {ch_title}\n")
             if ch_screenshot:
                 ch_lines.append(f"![{ch_title}]({ch_screenshot})\n")
             if ch_text:
                 ch_lines.append(f"{ch_text}\n")
+            if ch.get("evidence"):
+                ch_lines.append(f"> 证据：{ch['evidence']}\n")
         chapter_summary_section = CHAPTER_SUMMARY_TEMPLATE.format(
             chapters="\n".join(ch_lines)
         )
@@ -346,6 +358,8 @@ def assemble(
             q = fc.get("q", "?")
             a = fc.get("a", "?")
             cards_md += f"**Q{i}**: {q}\n\n**A{i}**: {a}\n\n"
+            if fc.get("evidence"):
+                cards_md += f"> 证据：{fc['evidence']}\n\n"
         flashcards_section = FLASHCARDS_TEMPLATE.format(cards=cards_md)
 
     # ── 组装 ──
@@ -362,6 +376,8 @@ def assemble(
         rating=rating if rating else '""',
         rating_display=rating_display,
         related_yaml=related_yaml,
+        task_id=task_id,
+        pipeline_version=pipeline_version,
         classification_section=classification_section,
         summary_section=summary_section,
         highlights_section=highlights_section,

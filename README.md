@@ -1,8 +1,8 @@
 # 知析 zhixi-learn v4.0
 
-> **Agent-Native Learning Pipeline.** One link → 1 unified AI call → hierarchical knowledge card with chapters, mindmap, highlights, glossary, flashcards → knowledge base import.
+> **Agent-Native Learning Pipeline.** One link → evidence-first Map-Reduce-Verify → hierarchical knowledge card with chapters, mindmap, highlights, glossary, flashcards → knowledge base import.
 >
-> **Agent 原生学习管道。** 一条链接 → 1 次统一 AI 调用 → 层级化知识卡片（章节分解+思维导图+亮点+术语+闪卡）→ 知识库导入。
+> **Agent 原生学习管道。** 一条链接 → 全文 Map-Reduce-Verify → 层级化知识卡片（章节分解+思维导图+亮点+术语+闪卡）→ 知识库导入。
 
 ---
 
@@ -29,12 +29,20 @@ pip install yt-dlp faster-whisper hearsay requests
 |------|------|
 | 🌐 **网络自适应** | 自动检测 GFW，筛选可用平台 |
 | 🔍 **8 平台支持** | 抖音 · TikTok · B站 · YouTube · 播客 · 微信 · 小红书 · 本地文件 |
-| 📥 **字幕优先 + 离线兜底** | yt-dlp 字幕 + Whisper 本地转写 |
-| 🏗 **统一 AI 分析** | **1 次 API 调用**覆盖：分类+总结+章节+亮点+术语+闪卡+深度思考+评分 |
+| 🔍 **中文界面 OCR** | PP-OCRv6（隔离环境）→ 旧 PaddleOCR → Tesseract |
+| 🏗 **证据优先 AI 分析** | 全文分段 Map → Reduce 汇总 → 本地证据 Verify；长内容按分段数量调用模型 |
 | 📑 **层级化输出** | 章节分解 + Mermaid 思维导图 + 3段式总结 |
-| 📤 **双知识库导入** | 思源（自动启动）+ Obsidian + 本地 Markdown |
-| 📦 **管道化批处理** | 多链接批量处理 + 断点续传 + 去重保护 |
+| 📤 **双知识库导入** | Obsidian（默认）+ 思源回退 + 本地 Markdown |
+| 📦 **可恢复任务** | SQLite 任务账本 + 工件清单 + 断点续传；成功导入后默认清理本地工件 |
 | 🔒 **安全防护** | API 限流 + 费用追踪 + 批量确认 + 连续失败跳过 |
+
+---
+
+### 文件保存规则
+
+- 处理中工件：`learn-output/_tasks/<task_id>/`，用于断点续传、转录、关键帧与分析中间结果。
+- 导入 Obsidian 后的笔记：`<Vault>/learn/<YYYY>/<YYYY-MM>/<platform>/<title>--<task_id>/<title>.md`，仅保留 Markdown 和引用的关键帧/资产。
+- 导入成功后默认清理该任务的本地工件；SQLite 账本仍保留来源链接和最终笔记路径。需要保留工件时加 `--keep-local`。
 
 ---
 
@@ -62,6 +70,12 @@ python zhixi-learn.py "url" --extract-only
 
 # 预览（dry-run）
 python zhixi-learn.py "url1" "url2" --dry-run
+
+# 分享文案、短链与推广参数会自动清洗；仅预览清洗结果时：
+python zhixi-learn.py "6.12 复制打开抖音，https://v.douyin.com/xxxxx/?share_token=.../" --dry-run
+
+# 不访问网络解析短链（仍会移除推广参数）：
+python zhixi-learn.py "https://b23.tv/xxxxx?spm_id_from=333" --dry-run --no-resolve-links
 ```
 
 ---
@@ -80,7 +94,7 @@ URL → 🌐 Network Detect → 🔍 Platform Detect → 📥 Extract
      ↓
 📄 Hierarchical Markdown (Mermaid mindmap + all sections)
      ↓
-📤 Import → SiYuan / Obsidian / Local
+📤 Import → Obsidian / SiYuan fallback / Local
 ```
 
 ### 输出示例

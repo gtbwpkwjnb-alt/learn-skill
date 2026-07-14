@@ -42,8 +42,12 @@ def extract_video(url: str, output_dir: Path) -> dict:
                 if url_r not in found_urls:
                     found_urls.append(url_r)
                     print(f"[VIDEO] {response.status} {url_r} ({ctype})")
-            # Also check .mp4 and .m3u8 patterns
-            if re.search(r"\.mp4", url_r) and "byte" in url_r and url_r not in found_urls:
+            # Douyin VOD URLs do not consistently expose a .mp4 suffix or a
+            # video content type, so keep its video stream endpoints as well.
+            if (
+                (re.search(r"\.mp4", url_r) and "byte" in url_r)
+                or ("douyinvod.com" in url_r and "media-audio" not in url_r)
+            ) and url_r not in found_urls:
                 found_urls.append(url_r)
                 print(f"[MP4] {url_r}")
 
@@ -73,6 +77,9 @@ def extract_video(url: str, output_dir: Path) -> dict:
             }"""
         )
         print(f"Video element: {json.dumps(video_info, ensure_ascii=False)}")
+        for candidate in (video_info.get("currentSrc"), video_info.get("src")):
+            if candidate and candidate not in found_urls:
+                found_urls.append(candidate)
 
         # Try to trigger video playback
         page.evaluate(

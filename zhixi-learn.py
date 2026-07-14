@@ -26,6 +26,12 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass, field
 
+# Keep bundled helpers importable when this file is launched by absolute path
+# from an arbitrary working directory.
+SKILL_DIR = Path(__file__).parent.resolve()
+if str(SKILL_DIR) not in sys.path:
+    sys.path.insert(0, str(SKILL_DIR))
+
 # Load .env file if present / 加载 .env 文件
 _ENV_FILE = Path(__file__).parent / ".env"
 if _ENV_FILE.exists():
@@ -40,10 +46,11 @@ if _ENV_FILE.exists():
 # ═══════════════════════════════════════════════════════════════════════════
 # Constants / 常量
 # ═══════════════════════════════════════════════════════════════════════════
-PYTHON = r"C:\Python312\python.exe"
-FFMPEG_BIN = r"C:\Tools\ffmpeg-8.1.1-essentials_build\bin"
-TOOLS_DIR = Path(__file__).parent.resolve()
-DOUYIN2MD = TOOLS_DIR / "douyin2md.py"
+PYTHON = os.environ.get("PYTHON_BIN", sys.executable)
+FFMPEG_BIN = os.environ.get("FFMPEG_BIN", r"C:\Tools\ffmpeg-8.1.1-essentials_build\bin")
+TOOLS_DIR = SKILL_DIR
+DOUYIN2MD = TOOLS_DIR / "scripts" / "extract_douyin.py"
+DOUYIN_PLAYWRIGHT = TOOLS_DIR / "scripts" / "douyin_playwright_extract.py"
 PROJECT_ROOT = TOOLS_DIR.parent
 DEFAULT_OUT = PROJECT_ROOT / "learn-output"
 REGISTRY_FILE = DEFAULT_OUT / ".registry.json"
@@ -80,6 +87,13 @@ BATCH_CONFIRM_THRESHOLD = 3      # 超过此数量的 URL 需确认后才执行
 MAX_CONSECUTIVE_FAILURES = 3     # 连续失败上限，超限自动跳过
 API_CALL_INTERVAL = 0.5          # 同一 URL 各 API 调用间延迟（秒）
 URL_INTERVAL = 1.0               # 各 URL 处理间延迟（秒）
+
+from scripts.analysis_pipeline import JsonPayloadError, parse_json_payload, split_transcript, verify_analysis_payload
+from scripts.bilibili_provider import fetch_bilibili_subtitles
+from scripts.link_normalizer import LinkNormalizationError, normalize_input
+from learn_core.models import TaskStage
+from learn_core.providers.douyin import DouyinProvider
+from learn_core.task_store import TaskStore
 
 # Obsidian (international users / 国际用户)
 OBSIDIAN_VAULT = os.environ.get("OBSIDIAN_VAULT", "")
@@ -296,10 +310,10 @@ def detect_network() -> NetworkEnv:
 PLATFORM_PATTERNS = {
     "douyin":      [r"(?:v\.douyin\.com|www\.douyin\.com/video|www\.iesdouyin\.com/share/video|douyin\.com/user/.*\bmodal_id=)"],
     "tiktok":      [r"(?:tiktok\.com|vm\.tiktok\.com)"],
-    "bilibili":    [r"bilibili\.com/video/"],
+    "bilibili":    [r"bilibili\.com/video/", r"(?:b23\.tv|bili2233\.cn)/"],
     "youtube":     [r"(?:youtube\.com/watch|youtu\.be/)"],
     "wechat":      [r"mp\.weixin\.qq\.com"],
-    "xiaohongshu": [r"xiaohongshu\.com"],
+    "xiaohongshu": [r"(?:xiaohongshu\.com|xhslink\.com)"],
     "podcast":     [r"\.(?:xml|rss)(?:\?|$)", r"/feed/?$", r"podcast"],
     "local":       [r"\.(?:mp4|mkv|avi|mov|mp3|wav|flac|m4a|webm)$"],
 }
@@ -424,7 +438,21 @@ def save_progress(task_id: str, step: str, data: Dict = None):
             progress = json.loads(PROGRESS_FILE.read_text(encoding="utf-8"))
         except Exception:
             pass
-    progress[task_id] = {"step": step, "data": data or {}, "time": datetime.now().isoformat()}
+    previous = progress.get(task_id, {})
+    merged_data = dict(previous.get("data", {}) or {})
+    merged_data.update(data or {})
+    history = list(previous.get("history", []) or [])
+    if previous.get("step"):
+        history.append({
+            "step": previous["step"],
+            "time": previous.get("time", ""),
+        })
+    progress[task_id] = {
+        "step": step,
+        "data": merged_data,
+        "time": datetime.now().isoformat(),
+        "history": history[-20:],
+    }
     PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
     PROGRESS_FILE.write_text(json.dumps(progress, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -445,7 +473,7 @@ def load_progress(task_id: str) -> Optional[Dict]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def clean_transcript(text: str) -> str:
-    """Clean transcript: dedup, fix all-caps, merge fragments / 清洗字幕"""
+    """Clean transcript without losing speaker attribution or evidence labels."""
     lines = text.splitlines()
     cleaned = []
     prev = ""
@@ -455,13 +483,23 @@ def clean_transcript(text: str) -> str:
         if not line:
             continue
 
-        # Remove speaker labels like "Speaker 1:" / 去掉说话人标签
-        line = re.sub(r'^\s*(?:Speaker\s*\d+|SPEAKER\s*\d+)\s*[:：]\s*', '', line, flags=re.IGNORECASE)
+        # Keep diarization labels.  They are evidence, not formatting noise.
+        speaker_match = re.match(
+            r'^\s*((?:speaker|说话人|发言人)\s*\d+)\s*[:：]\s*',
+            line,
+            flags=re.IGNORECASE,
+        )
+        speaker_prefix = ""
+        if speaker_match:
+            speaker_prefix = f"{speaker_match.group(1).strip()}: "
+            line = line[speaker_match.end():].strip()
 
         # Fix ALL CAPS lines (>80% uppercase) / 修正全大写行
         alpha_chars = [c for c in line if c.isalpha()]
         if alpha_chars and sum(1 for c in alpha_chars if c.isupper()) / len(alpha_chars) > 0.8:
             line = line.lower().capitalize()
+
+        line = speaker_prefix + line
 
         # Dedup consecutive identical lines / 去重连续相同行
         if line == prev:
@@ -534,46 +572,43 @@ def load_bilibili_cookie() -> Optional[str]:
 # Flashcard Generation / 闪卡生成
 # ═══════════════════════════════════════════════════════════════════════════
 
-STRUCTURED_ANALYSIS_PROMPT = """You are a professional learning analyst. Analyze the following transcript and return a comprehensive structured JSON.
+MAP_CHUNK_CHARS = 6000
+
+MAP_ANALYSIS_PROMPT = """You are an evidence-first learning analyst. Extract atomic facts from one transcript segment.
 
 Rules:
-1. Detect natural topic boundaries as chapters, each with an estimated start time (MM:SS).
-2. For each chapter, extract 3-5 key points and a 1-sentence summary.
-3. Generate a hierarchical 3-paragraph overall summary (first=TL;DR, second=detail, third=implications).
-4. Extract 5-8 timestamped highlights (MM:SS format where possible).
-5. Identify 3-8 key terms with clear definitions.
-6. Rate on three 1-5 scales: information_density, practicality, clarity, plus overall.
-7. Generate 5 Q&A flashcards testing conceptual understanding.
-8. Generate 2-3 deep reflection questions with thoughtful answers.
-9. Suggest a category (≤10 words) and 3-5 tags.
-
-Return valid JSON only (no markdown wrappers):
-{
-  "category": "...",
-  "tags": ["..."],
-  "summary": "TL;DR paragraph.\n\nDetail paragraph covering key arguments and evidence.\n\nImplications paragraph: why this matters.",
-  "chapters": [
-    {"title": "...", "time": "MM:SS", "points": ["...", "..."], "summary": "..."}
-  ],
-  "highlights": [
-    {"time": "MM:SS", "text": "..."}
-  ],
-  "glossary": [
-    {"term": "...", "definition": "..."}
-  ],
-  "rating": {"information_density": 4.0, "practicality": 4.0, "clarity": 4.0, "overall": 4.0},
-  "flashcards": [
-    {"q": "...", "a": "..."}
-  ],
-  "deep_questions": [
-    {"q": "...", "a": "..."}
-  ]
-}
+1. Each claim contains exactly one fact from the segment.
+2. evidence_quote must be a verbatim source quote and timestamp must come from the source when present.
+3. Preserve speaker labels when present. Do not infer missing information.
+4. Return JSON only: [{{"claim":"...","evidence_quote":"...","timestamp":"MM:SS or empty","speaker":"... or empty","confidence":"high|medium|low","topic":"..."}}].
 
 Title: {title}
-
-Transcript:
+Segment {segment_number}/{segment_count}:
 {transcript}"""
+
+REDUCE_ANALYSIS_PROMPT = """You are a professional learning analyst. Build one structured learning card only from the verified atomic facts below.
+
+Rules:
+1. Do not add facts not represented by evidence_quote.
+2. Merge duplicates and mark contradictions in the relevant text instead of silently choosing a side.
+3. Every list item must include an exact evidence field copied from an evidence_quote.
+4. Use MM:SS where available. Return valid JSON only.
+
+Schema:
+{{
+  "category":"...", "tags":["..."],
+  "summary":"three concise paragraphs: TL;DR, details, implications",
+  "chapters":[{{"title":"...","time":"MM:SS","points":["..."],"summary":"...","evidence":"..."}}],
+  "highlights":[{{"time":"MM:SS","text":"...","evidence":"..."}}],
+  "glossary":[{{"term":"...","definition":"...","evidence":"..."}}],
+  "rating":{{"information_density":4.0,"practicality":4.0,"clarity":4.0,"overall":4.0}},
+  "flashcards":[{{"q":"...","a":"...","evidence":"..."}}],
+  "deep_questions":[{{"q":"...","a":"...","evidence":"..."}}]
+}}
+
+Title: {title}
+Atomic facts:
+{facts_json}"""
 
 
 FLASHCARD_THRESHOLD = 500
@@ -621,7 +656,7 @@ def _call_deepseek(prompt: str, temperature: float = 0.3, max_tokens: int = 800,
 
 @dataclass
 class StructuredAnalysis:
-    """Result of a single unified AI analysis call."""
+    """Evidence-verified result of Map -> Reduce -> Verify analysis."""
     category: str = "未分类"
     tags: List[str] = field(default_factory=list)
     summary: str = ""
@@ -632,41 +667,64 @@ class StructuredAnalysis:
     rating_detail: Dict = field(default_factory=dict)
     flashcards: List[Dict] = field(default_factory=list)
     deep_questions: List[Dict] = field(default_factory=list)
+    verification: Dict = field(default_factory=dict)
+
+
+def _map_transcript_facts(title: str, chunks: List[str]) -> tuple[List[Dict], int]:
+    facts: List[Dict] = []
+    for index, chunk in enumerate(chunks, 1):
+        prompt = MAP_ANALYSIS_PROMPT.format(
+            title=title,
+            segment_number=index,
+            segment_count=len(chunks),
+            transcript=chunk,
+        )
+        try:
+            response, usage = _call_deepseek(
+                prompt, temperature=0.1, max_tokens=1400,
+                call_type="analysis_map", label=f"AI Map {index}/{len(chunks)}",
+            )
+            _record_api_call("analysis_map", f"{title}#{index}", "deepseek-chat", usage)
+            payload = parse_json_payload(response, list)
+            facts.extend(item for item in payload if isinstance(item, dict))
+        except Exception as e:
+            print(f"  ⚠ Map 第 {index}/{len(chunks)} 段失败: {e}")
+    return facts, len(chunks)
+
+
+def _reduce_analysis_facts(title: str, facts: List[Dict]) -> Dict:
+    payload = json.dumps(facts, ensure_ascii=False, separators=(",", ":"))
+    prompt = REDUCE_ANALYSIS_PROMPT.format(title=title, facts_json=payload)
+    response, usage = _call_deepseek(
+        prompt, temperature=0.2, max_tokens=3000,
+        call_type="analysis_reduce", label="AI Reduce",
+    )
+    _record_api_call("analysis_reduce", title, "deepseek-chat", usage)
+    return parse_json_payload(response, dict)
 
 
 def generate_structured_analysis(title: str, transcript: str) -> StructuredAnalysis:
-    """Single unified AI call that produces all analysis sections.
-    
-    Replaces: classify_content + generate_highlights + generate_deep_thinking
-              + generate_glossary + generate_rating + generate_flashcards
-    """
+    """Analyze all transcript chunks, then verify every rendered evidence item."""
     result = StructuredAnalysis()
     
     if not DEEPSEEK_KEY:
         print("  ⚠ DEEPSEEK_API_KEY 未配置，跳过 AI 分析")
         return result
     
-    text = transcript[:5000]  # enough context for most content
-    if len(transcript.strip()) < FLASHCARD_THRESHOLD:
-        text = transcript[:4000]  # shorter content needs less
-    
-    prompt = STRUCTURED_ANALYSIS_PROMPT.format(title=title, transcript=text)
-    
     try:
-        resp_text, usage = _call_deepseek(
-            prompt, temperature=0.3, max_tokens=2048,
-            call_type="structured_analysis", label="AI综合分析"
-        )
-        _record_api_call("structured_analysis", title, "deepseek-chat", usage)
-        
-        # Parse JSON from response (find first { ... })
-        match = re.search(r"\{[\s\S]*\}", resp_text)
-        if not match:
-            print(f"  ⚠ AI 返回格式异常，尝试提取 JSON 失败")
-            print(f"  原始响应(前200字): {resp_text[:200]}")
+        chunks = split_transcript(transcript, max_chars=MAP_CHUNK_CHARS)
+        expected_calls = len(chunks) + 1  # Map for each chunk, then one Reduce call.
+        if not _check_analysis_api_budget(expected_calls):
             return result
-        
-        data = json.loads(match.group())
+        facts, chunk_count = _map_transcript_facts(title, chunks)
+        if not facts:
+            print("  ⚠ 未提取到可验证的原子知识点，跳过 Reduce")
+            return result
+
+        print(f"  🧩 Map 完成: {chunk_count} 段 / {len(facts)} 条原子知识点")
+        data = _reduce_analysis_facts(title, facts)
+        data, verification = verify_analysis_payload(data, transcript)
+        result.verification = verification
         
         result.category = data.get("category", "未分类")
         result.tags = data.get("tags", []) or []
@@ -696,8 +754,11 @@ def generate_structured_analysis(title: str, transcript: str) -> StructuredAnaly
             print(f"  🤔 深度思考: {len(result.deep_questions)} 组")
         if result.rating:
             print(f"  🌟 综合评分: {result.rating}/5")
-        
-    except json.JSONDecodeError as e:
+        rejected = sum(verification.get("rejected", {}).values())
+        if rejected:
+            print(f"  🔎 Verify 已移除 {rejected} 条无原文证据的内容")
+
+    except (JsonPayloadError, json.JSONDecodeError) as e:
         print(f"  ⚠ AI JSON 解析失败: {e}")
     except Exception as e:
         print(f"  ⚠ AI 综合分析失败: {e}")
@@ -739,6 +800,36 @@ def build_related_notes(tags: List[str], current_title: str, max_notes: int = 5)
 # 增强的字幕兜底链 / Enhanced Subtitle Fallback Chain
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _write_timestamped_transcript(out_dir: Path, segments: List[Tuple[float, float, str]]) -> Path:
+    """Persist ASR output in formats usable by evidence verification and players."""
+    cleaned = [(float(start), float(end), text.strip()) for start, end, text in segments if text.strip()]
+    transcript_path = out_dir / "transcript.txt"
+    transcript_path.write_text(
+        "\n".join(f"[{_format_duration(int(start))}] {text}" for start, _end, text in cleaned),
+        encoding="utf-8",
+    )
+    (out_dir / "transcript.json").write_text(
+        json.dumps(
+            [{"start": start, "end": end, "text": text} for start, end, text in cleaned],
+            ensure_ascii=False, indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    def _srt_time(seconds: float) -> str:
+        millis = int(round(seconds * 1000))
+        hours, millis = divmod(millis, 3_600_000)
+        minutes, millis = divmod(millis, 60_000)
+        secs, milliseconds = divmod(millis, 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
+
+    srt_lines: List[str] = []
+    for index, (start, end, text) in enumerate(cleaned, 1):
+        srt_lines.extend([str(index), f"{_srt_time(start)} --> {_srt_time(end)}", text, ""])
+    (out_dir / "transcript.srt").write_text("\n".join(srt_lines), encoding="utf-8")
+    return transcript_path
+
+
 def _whisper_fallback(video_path: Path, out_dir: Path) -> Optional[Path]:
     """Direct whisper fallback for any video file / Whisper 直接转写兜底"""
     try:
@@ -753,10 +844,9 @@ def _whisper_fallback(video_path: Path, out_dir: Path) -> Optional[Path]:
             return None
         model = WhisperModel("base", device="auto", compute_type="auto")
         segments_iter, _info = model.transcribe(str(audio_path))
-        texts = [seg.text.strip() for seg in segments_iter]
-        transcript_path = out_dir / "transcript.txt"
-        transcript_path.write_text(" ".join(texts), encoding="utf-8")
-        print(f"  ✅ Whisper 兜底转写完成 ({len(texts)} 段)")
+        segments = [(float(seg.start), float(seg.end), seg.text.strip()) for seg in segments_iter]
+        transcript_path = _write_timestamped_transcript(out_dir, segments)
+        print(f"  ✅ Whisper 兜底转写完成 ({len(segments)} 段)")
         return transcript_path
     except ImportError:
         print(f"  ⚠ faster-whisper 未安装，无法兜底")
@@ -799,7 +889,7 @@ def run_douyin(url: str, out_dir: Path, with_frames: bool = False) -> Optional[P
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_SUBPROCESS)
     if result.returncode != 0:
         print(f"  ❌ 提取失败: {result.stderr.strip()}", file=sys.stderr)
-        return None
+        return _playwright_fallback_douyin(url, out_dir, with_frames)
     for line in result.stdout.splitlines():
         if "完成" in line and "→" in line:
             p = Path(line.split("→")[-1].strip())
@@ -810,8 +900,7 @@ def run_douyin(url: str, out_dir: Path, with_frames: bool = False) -> Optional[P
 
 
 def run_bilibili(url: str, out_dir: Path, env: NetworkEnv) -> Optional[Path]:
-    """Bilibili: yt-dlp subtitles → hearsay whisper fallback / B站提取"""
-    import yt_dlp
+    """Bilibili: dedicated subtitle CLI -> yt-dlp -> hearsay/Whisper fallback."""
 
     bvid = _extract_bvid(url)
     video_dir = out_dir / f"bilibili_{bvid}"
@@ -819,7 +908,23 @@ def run_bilibili(url: str, out_dir: Path, env: NetworkEnv) -> Optional[Path]:
     srt_path = video_dir / "subtitle.srt"
     txt_path = video_dir / "transcript.txt"
 
-    # Step 1: yt-dlp download subtitles / 下载字幕
+    # Step 1: platform-specific provider. It handles Bilibili's subtitle API,
+    # browser cookies, and timeline output more reliably than generic yt-dlp.
+    cli_result, cli_error = fetch_bilibili_subtitles(url)
+    if cli_result:
+        cleaned = clean_transcript(cli_result.transcript)
+        txt_path.write_text(cleaned, encoding="utf-8")
+        title = cli_result.title or bvid
+        _write_summary(video_dir / "summary.md", url, "bilibili", title,
+                       cli_result.author, cli_result.duration_sec, txt_path)
+        print(f"  ✅ B站专用字幕 provider 成功: {cli_result.command}")
+        return video_dir / "summary.md"
+    if cli_error:
+        print(f"  ⚠ B站专用字幕不可用，转入通用兜底: {cli_error}")
+
+    import yt_dlp
+
+    # Step 2: yt-dlp download subtitles / 下载字幕
     cookie = load_bilibili_cookie()
     print(f"  ▶ B站字幕下载 (Cookie: {'已配置' if cookie else '未配置 - 仅公开字幕'})")
 
@@ -934,7 +1039,8 @@ def _build_mindmap_md(title: str, chapters: Optional[List[Dict]],
             ch_t = ch.get("title", "").replace('"', "'")[:30]
             md += f"    {ch_t}\n"
             for pt in (ch.get("points", []) or [])[:3]:
-                md += f"      {pt.replace('"', "'")[:40]}\n"
+                point_text = str(pt).replace('"', "'")[:40]
+                md += f"      {point_text}\n"
         md += "```\n\n"
     elif highlights:
         md += "```mermaid\nmindmap\n  root((\""
@@ -962,6 +1068,8 @@ def _build_chapters_md(chapters: Optional[List[Dict]]) -> str:
             md += f"{ch_summary}\n\n"
         if ch_points:
             md += "要点：\n" + "\n".join(f"- {pt}" for pt in ch_points) + "\n\n"
+        if ch.get("evidence"):
+            md += f"> 证据：{ch['evidence']}\n\n"
     return md
 
 
@@ -974,6 +1082,8 @@ def _build_highlights_md(highlights: Optional[List[Dict]]) -> str:
         ht = h.get("time", "")
         ht_tag = f"`{ht}` " if ht else ""
         md += f"- {ht_tag}{h.get('text', '')}\n"
+        if h.get("evidence"):
+            md += f"  > 证据：{h['evidence']}\n"
     return md
 
 
@@ -981,8 +1091,12 @@ def _build_glossary_md(glossary: Optional[List[Dict]]) -> str:
     """Build glossary definition list markdown."""
     if not glossary:
         return ""
-    return "\n".join(f"- **{g.get('term', '')}**: {g.get('definition', '')}"
-                     for g in glossary) + "\n"
+    lines = []
+    for g in glossary:
+        lines.append(f"- **{g.get('term', '')}**: {g.get('definition', '')}")
+        if g.get("evidence"):
+            lines.append(f"  > 证据：{g['evidence']}")
+    return "\n".join(lines) + "\n"
 
 
 def _build_qa_list_md(items: Optional[List[Dict]], label_q: str = "Q",
@@ -994,6 +1108,8 @@ def _build_qa_list_md(items: Optional[List[Dict]], label_q: str = "Q",
     for i, item in enumerate(items, 1):
         md += f"**{label_q}{i}:** {item.get('q', '')}\n"
         md += f"**{label_a}{i}:** {item.get('a', '')}\n\n"
+        if item.get("evidence"):
+            md += f"> 证据：{item['evidence']}\n\n"
     return md
 
 
@@ -1036,18 +1152,20 @@ def _write_summary(md_path: Path, url: str, platform: str,
                    chapters: Optional[List[Dict]] = None,
                    related_notes: Optional[List[Dict]] = None,
                    flashcards: Optional[List[Dict]] = None,
-                   rating_detail: Optional[Dict] = None):
+                   rating_detail: Optional[Dict] = None,
+                   task_id: str = "",
+                   transcript_text: Optional[str] = None):
     """Write hierarchical summary.md with all sections / 写入层级化Markdown"""
-    transcript = ""
-    if transcript_path and transcript_path.exists():
+    transcript = transcript_text or ""
+    if not transcript and transcript_path and transcript_path.exists():
         transcript = transcript_path.read_text(encoding="utf-8")
 
     duration_str = _format_duration(duration_sec) if duration_sec else ""
 
-    # Try external assemble module first
+    # One renderer is used for every platform.  The old path pointed at a
+    # development-only checkout and silently selected a different template.
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "repos" / "learn-skill" / "scripts"))
-        from assemble_md import assemble
+        from scripts.assemble_md import assemble
         md = assemble(
             title=title, url=url, platform=platform, author=author,
             duration=duration_str, transcript=transcript,
@@ -1055,7 +1173,7 @@ def _write_summary(md_path: Path, url: str, platform: str,
             summary=summary, highlights=highlights,
             deep_thinking=deep_thinking, glossary=glossary,
             rating=rating, chapters=chapters,
-            related_notes=related_notes, flashcards=flashcards,
+            related_notes=related_notes, flashcards=flashcards, task_id=task_id,
         )
     except ImportError:
         # ── Built-in hierarchical template (no external deps) ──
@@ -1177,14 +1295,39 @@ def import_to_siyuan(md_path: Path, title: str) -> bool:
     return False
 
 
-def export_to_obsidian(md_path: Path, vault_path: str) -> bool:
+def _safe_note_name(value: str, fallback: str = "untitled") -> str:
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", value).strip(" .-")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return (cleaned[:100] or fallback)
+
+
+def _frontmatter_value(markdown: str, key: str) -> str:
+    match = re.search(rf'^{re.escape(key)}:\s*["\']?(.*?)["\']?\s*$', markdown, re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def export_to_obsidian(md_path: Path, vault_path: str) -> Optional[Path]:
     """Export to Obsidian vault / 导出到 Obsidian 库"""
     try:
-        dest = Path(vault_path) / "learn" / md_path.name
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        markdown = md_path.read_text(encoding="utf-8")
+        source_id = _frontmatter_value(markdown, "task_id") or hashlib.sha256(str(md_path.resolve()).encode("utf-8")).hexdigest()[:12]
+        title = _safe_note_name(_frontmatter_value(markdown, "title"), md_path.stem)
+        platform = _safe_note_name(_frontmatter_value(markdown, "platform"), "video")
+        now = datetime.now()
+        dest_dir = Path(vault_path) / "learn" / str(now.year) / f"{now.year}-{now.month:02d}" / platform / f"{title}--{source_id}"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        # A vault note needs only its Markdown and referenced visual assets.
+        # Source HTML, transcripts, metadata, and media stay in the task
+        # workspace and are removed after a verified import.
+        for source in md_path.parent.iterdir():
+            if source == md_path:
+                continue
+            if source.is_dir() and source.name in {"frames", "assets"}:
+                shutil.copytree(source, dest_dir / source.name, dirs_exist_ok=True)
+        dest = dest_dir / f"{title}.md"
         shutil.copy2(md_path, dest)
         print(f"  ✅ 已导出到 Obsidian: {dest}")
-        return True
+        return dest
     except Exception as e:
         print(f"  ⚠ Obsidian 导出失败: {e}")
         return False
@@ -1217,6 +1360,43 @@ def _format_duration(seconds: int) -> str:
     h, r = divmod(seconds, 3600)
     m, s = divmod(r, 60)
     return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def _playwright_fallback_douyin(url: str, out_dir: Path, with_frames: bool = False) -> Optional[Path]:
+    """Capture a Douyin media URL in Chromium, then reuse the local ASR path."""
+    try:
+        from scripts.douyin_playwright_extract import download_video, extract_video
+
+        target_dir = out_dir / f"douyin_playwright_{hashlib.md5(url.encode()).hexdigest()[:12]}"
+        print(f"  ▶ Playwright 网络拦截兜底: {DOUYIN_PLAYWRIGHT.name}")
+        metadata = extract_video(url, target_dir)
+        (target_dir / "metadata.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        video_urls = list(metadata.get("video_urls", []) or [])
+        video_urls.sort(key=lambda value: ("media-audio" in value, "video" not in value))
+        for video_url in video_urls:
+            video_path = target_dir / "video.mp4"
+            if not download_video(video_url, video_path):
+                continue
+            if not video_path.exists() or video_path.stat().st_size < 1024:
+                video_path.unlink(missing_ok=True)
+                continue
+            transcript_path = _whisper_fallback(video_path, target_dir)
+            if not transcript_path:
+                return None
+            video_info = metadata.get("video_element", {}) or {}
+            _write_summary(
+                target_dir / "summary.md", url, "douyin",
+                metadata.get("title", "Douyin video"), "",
+                int(video_info.get("duration") or 0), transcript_path,
+            )
+            return target_dir / "summary.md"
+        print("  ⚠ Playwright 未捕获到可下载的视频流")
+        return None
+    except Exception as e:
+        print(f"  ⚠ Playwright 兜底失败: {e}")
+        return None
 
 
 def _whisper_fallback_douyin(url: str, out_dir: Path) -> Optional[Path]:
@@ -1379,8 +1559,8 @@ def _check_api_safety(urls_count: int) -> bool:
     log = _load_api_call_log()
     daily_used = log.get("daily_count", {}).get(today, 0)
 
-    # 每个 URL 预计 1 次调用（统一结构化分析取代旧6步链）
-    estimated_calls = urls_count * 1
+    # 初筛只知道 URL 数；提取转录后会按实际 Map 分段再次精确检查。
+    estimated_calls = urls_count * 2
 
     if estimated_calls > MAX_API_CALLS_PER_RUN:
         print(f"⚠ 安全拦截：本次预计 {estimated_calls} 次 API 调用，超过单次运行上限 {MAX_API_CALLS_PER_RUN}")
@@ -1405,21 +1585,63 @@ def _check_api_safety(urls_count: int) -> bool:
     return True
 
 
+def _check_analysis_api_budget(expected_calls: int) -> bool:
+    """Check the exact Map + Reduce call budget after the transcript is available."""
+    if "LEARN_SKIP_SAFETY" in os.environ:
+        return True
+    log = _load_api_call_log()
+    today = datetime.now().strftime("%Y-%m-%d")
+    daily_used = log.get("daily_count", {}).get(today, 0)
+    if expected_calls > MAX_API_CALLS_PER_RUN:
+        print(f"⚠ 分段分析预计 {expected_calls} 次 API 调用，超过单任务上限 {MAX_API_CALLS_PER_RUN}")
+        print("  请缩短内容、调整分段大小，或显式设置 LEARN_SKIP_SAFETY=1")
+        return False
+    if daily_used + expected_calls > MAX_API_CALLS_PER_DAY:
+        print(f"⚠ 分段分析预计 {expected_calls} 次调用，今日额度不足 ({daily_used}/{MAX_API_CALLS_PER_DAY})")
+        return False
+    print(f"  🤖 分段分析预计调用: Map {expected_calls - 1} 次 + Reduce 1 次")
+    return True
+
+
+def cleanup_task_workspace(task_dir: Path, output_root: Path) -> bool:
+    """Remove a completed task's local artifacts only after vault export succeeds."""
+    try:
+        task_dir = task_dir.resolve()
+        expected_parent = (Path(output_root).resolve() / "_tasks").resolve()
+        if task_dir.parent != expected_parent:
+            raise ValueError(f"Refusing to clean unexpected task path: {task_dir}")
+        shutil.rmtree(task_dir)
+        print(f"  🧹 已清理本地任务工件: {task_dir}")
+        return True
+    except Exception as error:
+        print(f"  ⚠ 本地任务清理失败: {error}")
+        return False
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Main / 主流程
 # ═══════════════════════════════════════════════════════════════════════════
 
-def process_single(url: str, env: NetworkEnv, out_dir: Path,
+def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
                    with_frames: bool = False, no_import: bool = False,
-                   extract_only: bool = False) -> bool:
-    """Process a single URL / 处理单个链接"""
+                   extract_only: bool = False, resolve_short_links: bool = True,
+                   keep_local: bool = False) -> bool:
+    """Process one copied link/message after normalizing it to a content URL."""
+    try:
+        link = normalize_input(raw_input, resolve_short_links=resolve_short_links)
+    except LinkNormalizationError as e:
+        print(f"❌ 链接清洗失败: {e}")
+        return False
+
+    url = link.canonical_url
+    if not link.is_local_path and (link.extracted_url != url or link.resolved_url):
+        print(f"🔗 原始输入已清洗 → {url}")
+        if link.removed_params:
+            print(f"   已移除追踪参数: {', '.join(link.removed_params)}")
+        if link.resolution_error:
+            print(f"   ⚠ 短链未解析，继续使用原短链: {link.resolution_error}")
     task_id = hashlib.md5(url.encode()).hexdigest()[:12]
     consecutive_failures = 0  # 同一 URL 连续失败计数
-
-    # Dedup check / 去重检查
-    if is_duplicate(url):
-        print(f"⏭ 跳过(已处理): {url}")
-        return True
 
     platform = detect_platform(url)
     if not platform:
@@ -1435,48 +1657,84 @@ def process_single(url: str, env: NetworkEnv, out_dir: Path,
         print(f"❌ {platform} 需要浏览器（Edge/Chrome）→ 当前不可用，请安装 Edge 或 Chrome")
         return False
 
+    task_store = TaskStore(out_dir)
+    task = task_store.create_or_resume(
+        task_id=task_id, raw_input=raw_input, canonical_url=url, platform=platform,
+        metadata={"link_normalization": link.to_dict()},
+    )
+    if is_duplicate(url):
+        if task.stage != TaskStage.COMPLETED:
+            task_store.skip(task_id, "legacy_registry_completed")
+        print(f"⏭ 跳过(已处理): {url}")
+        return True
+
+    task_dir = task_store.task_dir(task_id)
+    douyin_provider = DouyinProvider()
+    task_store.transition(task_id, TaskStage.NORMALIZED, data={"task_dir": str(task_dir)})
+    if douyin_provider.supports(platform):
+        douyin_provider.write_source_manifest(
+            task_dir, raw_input=raw_input, canonical_url=url, normalized_link=link.to_dict(),
+        )
+
     print(f"\n{'='*60}")
     print(f"🔍 [{platform}] {url}")
     print(f"{'='*60}")
 
     ensure_ffmpeg()
-    save_progress(task_id, "extracting", {"url": url, "platform": platform})
+    save_progress(task_id, "extracting", {
+        "url": url,
+        "platform": platform,
+        "link_normalization": link.to_dict(),
+    })
+    task_store.transition(task_id, TaskStage.EXTRACTING)
 
-    # Extract / 提取——增强兜底链
-    md_path = None
+    # Extract / 提取——增强兜底链。已完成媒体阶段的任务直接复用工件，
+    # 不因摘要或导入失败而再次触发抖音下载和 ASR。
+    resumed_summary_value = str(task.metadata.get("summary_path", "") or "")
+    resumed_summary = Path(resumed_summary_value) if resumed_summary_value else None
+    md_path = resumed_summary if resumed_summary and resumed_summary.is_file() else None
+    if md_path:
+        print(f"  ↩ 复用已有提取工件: {md_path}")
     try:
-        if platform in ("douyin", "tiktok"):
-            md_path = run_douyin(url, out_dir, with_frames)
+        if not md_path and platform in ("douyin", "tiktok"):
+            md_path = run_douyin(url, task_dir, with_frames)
             # 抖音兜底：如果 extract_douyin 失败，用 yt-dlp + whisper 直接下载
             if not md_path and DEEPSEEK_KEY:
                 print(f"  ⚠ 抖音提取失败，尝试 yt-dlp + whisper 兜底...")
-                md_path = _whisper_fallback_douyin(url, out_dir)
-        elif platform == "bilibili":
-            md_path = run_bilibili(url, out_dir, env)
+                md_path = _whisper_fallback_douyin(url, task_dir)
+        elif not md_path and platform == "bilibili":
+            md_path = run_bilibili(url, task_dir, env)
             # B站兜底：如果 yt-dlp 和 hearsay 都失败，尝试直接 whisper
             if not md_path:
                 print(f"  ⚠ B站提取失败，尝试直接 whisper 兜底...")
-                md_path = _whisper_fallback_bilibili(url, out_dir)
-        elif platform == "youtube":
+                md_path = _whisper_fallback_bilibili(url, task_dir)
+        elif not md_path and platform == "youtube":
             print("❌ YouTube 不可用，请使用代理")
             return False
-        elif platform in ("wechat", "xiaohongshu"):
+        elif not md_path and platform in ("wechat", "xiaohongshu"):
             print(f"❌ {platform} 需要浏览器（Edge/Chrome），请安装后重试")
             return False
-        elif platform in ("podcast", "local"):
-            md_path = run_hearsay(url, out_dir, is_local=(platform == "local"))
+        elif not md_path and platform in ("podcast", "local"):
+            md_path = run_hearsay(url, task_dir, is_local=(platform == "local"))
     except Exception as e:
+        task_store.fail(task_id, str(e), data={"during": "extracting"})
         print(f"❌ 提取异常: {e}")
         return False
 
     if not md_path or not md_path.exists():
+        task_store.fail(task_id, "content extraction returned no markdown", data={"during": "extracting"})
         print("❌ 内容提取失败")
         return False
 
     save_progress(task_id, "extracted", {"output": str(md_path)})
+    artifact_data = {"summary_path": str(md_path)}
+    if douyin_provider.supports(platform):
+        artifact_data["artifacts"] = douyin_provider.build_artifact_manifest(task_dir, md_path)
+    task_store.transition(task_id, TaskStage.MEDIA_READY, data=artifact_data)
 
     # Extract-only mode: stop here, let ZCode handle AI steps / 仅提取模式
     if extract_only:
+        task_store.complete(task_id, data={"mode": "extract_only", "note_path": str(md_path)})
         print(f"✅ 提取完成 (extract-only) → {md_path}")
         return True
 
@@ -1487,58 +1745,82 @@ def process_single(url: str, env: NetworkEnv, out_dir: Path,
 
     # ── AI 分析：统一调用（取代旧的6步串行链）──
     save_progress(task_id, "ai_analysis")
+    task_store.transition(task_id, TaskStage.ANALYZING)
     transcript_text = md_content.split("## 📝")[-1].strip() if "## 📝" in md_content else md_content
     
     ai_result = generate_structured_analysis(title, transcript_text)
+    save_progress(task_id, "ai_analysis", {"verification": ai_result.verification})
+    analysis_path = md_path.parent / "analysis.json"
+    analysis_path.write_text(json.dumps({
+        "category": ai_result.category, "tags": ai_result.tags, "summary": ai_result.summary,
+        "chapters": ai_result.chapters, "highlights": ai_result.highlights,
+        "glossary": ai_result.glossary, "flashcards": ai_result.flashcards,
+        "deep_questions": ai_result.deep_questions, "rating": ai_result.rating,
+        "rating_detail": ai_result.rating_detail, "verification": ai_result.verification,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    task_store.transition(task_id, TaskStage.ANALYZED, data={"analysis_path": str(analysis_path)})
     
     # ── Knowledge Graph / 知识图谱 ──
     related_notes = build_related_notes(ai_result.tags, title)
     
     # ── 重新组装完整 Markdown ──
-    _write_summary(
-        md_path=md_path, url=url, platform=platform,
-        title=title, author=author_from_md(md_content),
-        duration_sec=duration_from_md(md_content),
-        transcript_path=None,
-        category=ai_result.category, tags=ai_result.tags,
-        summary=ai_result.summary,
-        chapters=ai_result.chapters,
-        highlights=ai_result.highlights,
-        deep_thinking=ai_result.deep_questions,
-        glossary=ai_result.glossary,
-        rating=ai_result.rating,
-        rating_detail=ai_result.rating_detail,
-        flashcards=ai_result.flashcards,
-        related_notes=related_notes,
-    )
+    try:
+        _write_summary(
+            md_path=md_path, url=url, platform=platform,
+            title=title, author=author_from_md(md_content),
+            duration_sec=duration_from_md(md_content),
+            transcript_path=None,
+            transcript_text=transcript_text,
+            category=ai_result.category, tags=ai_result.tags,
+            summary=ai_result.summary,
+            chapters=ai_result.chapters,
+            highlights=ai_result.highlights,
+            deep_thinking=ai_result.deep_questions,
+            glossary=ai_result.glossary,
+            rating=ai_result.rating,
+            rating_detail=ai_result.rating_detail,
+            flashcards=ai_result.flashcards,
+            related_notes=related_notes,
+            task_id=task_id,
+        )
+    except Exception as e:
+        task_store.fail(task_id, str(e), data={"during": "markdown_render"})
+        print(f"❌ Markdown 组装失败: {e}")
+        return False
 
     # ── Import / 导入 ──
     imported = False
+    vault_note_path: Optional[Path] = None
     if not no_import:
         save_progress(task_id, "importing")
+        task_store.transition(task_id, TaskStage.EXPORTING)
 
-        # Try SiYuan first / 优先思源
-        if env.has_siyuan:
+        # Obsidian is the primary, portable Markdown vault for this pipeline.
+        if env.obsidian_vault:
+            vault_note_path = export_to_obsidian(md_path, env.obsidian_vault)
+            imported = vault_note_path is not None
+
+        # SiYuan remains an optional fallback for users who configure it.
+        if not imported and env.has_siyuan:
             if not env.siyuan_running:
                 env.siyuan_running = ensure_siyuan_running()
             if env.siyuan_running:
                 imported = import_to_siyuan(md_path, title)
 
-        # Fallback to Obsidian / Obsidian备选
-        if not imported and env.obsidian_vault:
-            imported = export_to_obsidian(md_path, env.obsidian_vault)
-
-    # Always save local copy / 总是保存本地副本
+    # The task directory is the canonical local copy.  Do not flatten every
+    # note into the output root, where identical summary.md names collide.
     if not imported:
-        local_copy = out_dir / md_path.name
-        if local_copy != md_path:
-            shutil.copy2(md_path, local_copy)
-        print(f"  💾 已保存本地: {local_copy}")
+        print(f"  💾 已保存本地: {md_path}")
 
     # Mark processed / 标记已处理（含评分和错误记录）
-    mark_processed(url, str(md_path), {
+    final_note_path = str(vault_note_path or md_path)
+    mark_processed(url, final_note_path, {
         "title": title,
         "platform": platform,
+        "raw_input": raw_input,
+        "resolved_url": link.resolved_url or "",
+        "removed_tracking_params": list(link.removed_params),
+        "verification": ai_result.verification,
         "category": ai_result.category,
         "tags": ai_result.tags,
         "rating": ai_result.rating,
@@ -1548,8 +1830,17 @@ def process_single(url: str, env: NetworkEnv, out_dir: Path,
         "has_chapters": bool(ai_result.chapters),
         "has_flashcards": bool(ai_result.flashcards),
     })
+    cleaned = bool(imported and vault_note_path and not keep_local)
+    task_store.complete(task_id, data={
+        "note_path": final_note_path,
+        "imported": imported,
+        "vault_note_path": final_note_path if vault_note_path else "",
+        "local_artifacts_cleaned": cleaned,
+    })
+    if cleaned:
+        cleanup_task_workspace(task_dir, out_dir)
 
-    print(f"✅ 完成 → {md_path}")
+    print(f"✅ 完成 → {final_note_path}")
     return True
 
 
@@ -1561,6 +1852,8 @@ def main():
     # Parse flags / 解析参数
     urls = []
     with_frames = False; no_import = False; dry_run = False; extract_only = False; out_dir = DEFAULT_OUT
+    resolve_short_links = True
+    keep_local = False
 
     i = 1
     while i < len(sys.argv):
@@ -1573,6 +1866,10 @@ def main():
             extract_only = True
         elif a == "--dry-run":
             dry_run = True
+        elif a == "--no-resolve-links":
+            resolve_short_links = False
+        elif a == "--keep-local":
+            keep_local = True
         elif a == "--out" and i + 1 < len(sys.argv):
             i += 1; out_dir = Path(sys.argv[i])
         elif not a.startswith("--"):
@@ -1597,10 +1894,19 @@ def main():
     print()
 
     if dry_run:
-        for url in urls:
-            platform = detect_platform(url) or "unknown"
+        for raw_input in urls:
+            try:
+                link = normalize_input(raw_input, resolve_short_links=resolve_short_links)
+            except LinkNormalizationError as e:
+                print(f"  [dry-run] 无效输入: {e}")
+                continue
+            platform = detect_platform(link.canonical_url) or "unknown"
             status = env.platform_status.get(platform, "unknown")
-            print(f"  [dry-run] {platform} ({status}): {url}")
+            print(f"  [dry-run] {platform} ({status}): {link.canonical_url}")
+            if link.extracted_url != link.canonical_url or link.resolved_url:
+                print(f"            原始: {link.extracted_url}")
+            if link.removed_params:
+                print(f"            移除追踪参数: {', '.join(link.removed_params)}")
         print("\n[dry-run] 未实际执行")
         sys.exit(0)
 
@@ -1610,8 +1916,8 @@ def main():
 
     # Process all URLs / 批量处理
     success = 0; fail = 0
-    for url in urls:
-        if process_single(url, env, out_dir, with_frames, no_import, extract_only):
+    for raw_input in urls:
+        if process_single(raw_input, env, out_dir, with_frames, no_import, extract_only, resolve_short_links, keep_local):
             success += 1
         else:
             fail += 1

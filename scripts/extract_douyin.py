@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -30,6 +31,15 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+try:
+    from .ocr_provider import paddleocr_installed, ppocr_v6_available, select_ocr_provider, tesseract_available
+except ImportError:  # Direct CLI execution: python scripts/extract_douyin.py
+    from ocr_provider import paddleocr_installed, ppocr_v6_available, select_ocr_provider, tesseract_available
 
 
 # ── Exceptions ───────────────────────────────────────────────────────────────
@@ -54,7 +64,6 @@ class FrameExtractionError(RuntimeError):
 
 _BASE_BINARIES = ("ffmpeg",)
 _FRAME_BINARIES = ()
-_OCR_BINARIES = ("tesseract",)
 _BASE_PYTHON_MODULES = ("yt_dlp",)
 
 
@@ -73,10 +82,8 @@ def _check_dependencies(*, require_frames: bool, require_ocr: bool) -> tuple[lis
         for b in _FRAME_BINARIES:
             if shutil.which(b) is None:
                 missing_frame.append(b)
-    if require_ocr:
-        for b in _OCR_BINARIES:
-            if shutil.which(b) is None:
-                missing_ocr.append(b)
+    if require_ocr and not (ppocr_v6_available() or paddleocr_installed() or tesseract_available()):
+        missing_ocr.append("PaddleOCR or Tesseract")
 
     missing_bins = [b for b in binaries if shutil.which(b) is None]
     missing_mods = [
@@ -194,6 +201,9 @@ def _merge_av(video_path: Path, audio_source_path: Path, output_path: Path) -> P
 
 # ── Transcription (faster-whisper) ───────────────────────────────────────────
 
+TRANSCRIBE_CHUNK_SECONDS = 20 * 60
+TRANSCRIBE_CHUNK_OVERLAP_SECONDS = 2
+
 @dataclass
 class TranscriptResult:
     plain_text: str
@@ -201,17 +211,106 @@ class TranscriptResult:
     language: str = ""
 
 
+def _audio_duration_seconds(audio_path: Path) -> float | None:
+    """Read media duration without decoding the file."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(audio_path)],
+        capture_output=True,
+        text=True,
+    )
+    try:
+        return float(result.stdout.strip()) if result.returncode == 0 else None
+    except ValueError:
+        return None
+
+
+def _transcription_checkpoint(audio_path: Path) -> Path:
+    return audio_path.parent / "transcription_progress.json"
+
+
+def _audio_fingerprint(audio_path: Path) -> dict[str, int]:
+    stat = audio_path.stat()
+    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
+def _load_transcription_checkpoint(audio_path: Path, chunk_count: int) -> dict[int, list[tuple[float, float, str]]]:
+    checkpoint = _transcription_checkpoint(audio_path)
+    if not checkpoint.exists():
+        return {}
+    try:
+        payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+        if payload.get("fingerprint") != _audio_fingerprint(audio_path) or payload.get("chunk_count") != chunk_count:
+            return {}
+        completed = {}
+        for item in payload.get("completed", []):
+            index = int(item["index"])
+            completed[index] = [(float(start), float(end), str(text)) for start, end, text in item["segments"]]
+        return completed
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _save_transcription_checkpoint(audio_path: Path, chunk_count: int, completed: dict[int, list[tuple[float, float, str]]]) -> None:
+    payload = {
+        "fingerprint": _audio_fingerprint(audio_path),
+        "chunk_count": chunk_count,
+        "completed": [
+            {"index": index, "segments": segments}
+            for index, segments in sorted(completed.items())
+        ],
+    }
+    checkpoint = _transcription_checkpoint(audio_path)
+    temporary = checkpoint.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    os.replace(temporary, checkpoint)
+
+
 def _transcribe(audio_path: Path) -> TranscriptResult:
-    """Run faster-whisper (base model) on the audio file."""
+    """Run faster-whisper, splitting long audio and resuming completed chunks."""
     from faster_whisper import WhisperModel
 
     model = WhisperModel("base", device="auto", compute_type="auto")
-    segments_iter, info = model.transcribe(str(audio_path))
-    segments: list[tuple[float, float, str]] = []
-    for seg in segments_iter:
-        segments.append((float(seg.start), float(seg.end), seg.text.strip()))
+    duration = _audio_duration_seconds(audio_path)
+    if duration is None or duration <= TRANSCRIBE_CHUNK_SECONDS:
+        segments_iter, info = model.transcribe(str(audio_path))
+        segments = [(float(seg.start), float(seg.end), seg.text.strip()) for seg in segments_iter]
+        plain_text = " ".join(text for _, _, text in segments).strip()
+        return TranscriptResult(plain_text=plain_text, segments=segments, language=info.language)
+
+    chunk_starts = list(range(0, int(duration), TRANSCRIBE_CHUNK_SECONDS))
+    completed = _load_transcription_checkpoint(audio_path, len(chunk_starts))
+    language = ""
+    chunk_dir = audio_path.parent / "transcript_chunks"
+    chunk_dir.mkdir(exist_ok=True)
+
+    for index, start in enumerate(chunk_starts):
+        if index in completed:
+            continue
+        length = min(TRANSCRIBE_CHUNK_SECONDS + TRANSCRIBE_CHUNK_OVERLAP_SECONDS, duration - start)
+        chunk_path = chunk_dir / f"chunk_{index:04d}.wav"
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-ss", str(start), "-t", str(length), "-i", str(audio_path), "-c", "copy", str(chunk_path)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise AudioExtractionError(f"ffmpeg chunking failed: {result.stderr.strip()}")
+        segments_iter, info = model.transcribe(str(chunk_path))
+        language = language or info.language
+        completed[index] = [(start + float(seg.start), start + float(seg.end), seg.text.strip()) for seg in segments_iter]
+        _save_transcription_checkpoint(audio_path, len(chunk_starts), completed)
+        print(f"  🧩 转写分段完成: {index + 1}/{len(chunk_starts)}")
+
+    segments = []
+    last_end = -1.0
+    for index in range(len(chunk_starts)):
+        for start, end, text in completed.get(index, []):
+            # Overlap may reproduce the tail of the previous chunk.
+            if text and (start >= last_end or end > last_end + 0.2):
+                segments.append((start, end, text))
+                last_end = max(last_end, end)
     plain_text = " ".join(text for _, _, text in segments).strip()
-    return TranscriptResult(plain_text=plain_text, segments=segments, language=info.language)
+    return TranscriptResult(plain_text=plain_text, segments=segments, language=language)
 
 
 def _write_srt(segments: list[tuple[float, float, str]], srt_path: Path) -> None:
@@ -253,19 +352,18 @@ def _extract_keyframes(video_path: Path, out_dir: Path) -> list[tuple[Path, floa
 
 # ── OCR ──────────────────────────────────────────────────────────────────────
 
-def _ocr_frames(frames: list[tuple[Path, float]]) -> list[tuple[float, str]]:
-    """Run Tesseract OCR on each frame; return (timestamp, text) for non-empty results."""
-    import pytesseract
-    from PIL import Image
-
+def _ocr_frames(frames: list[tuple[Path, float]]) -> tuple[list[tuple[float, str]], str, str]:
+    """Run PaddleOCR first, then Tesseract only when PaddleOCR is unavailable."""
+    provider = select_ocr_provider()
+    if provider is None:
+        return [], "none", "未找到可用 OCR provider"
+    texts = provider.read_many([path for path, _ts in frames]) if provider.read_many else [provider.read(path) for path, _ts in frames]
     results: list[tuple[float, str]] = []
-    for frame_path, ts in frames:
-        image = Image.open(str(frame_path))
-        raw = pytesseract.image_to_string(image, lang="chi_sim+eng")
-        text = raw.strip()
+    for (_frame_path, ts), text in zip(frames, texts):
+        text = text.strip()
         if text:
             results.append((ts, text))
-    return results
+    return results, provider.name, provider.fallback_reason
 
 
 def _write_ocr(items: list[tuple[float, str]], out_path: Path) -> None:
@@ -285,6 +383,7 @@ class SummaryInput:
     transcript_segments: list[tuple[float, float, str]]
     transcript_language: str
     ocr_entries: list[tuple[float, str]] = field(default_factory=list)
+    ocr_provider: str = "none"
     frames: list[tuple[Path, float]] = field(default_factory=list)
 
 
@@ -354,6 +453,7 @@ def write_summary(data: SummaryInput, out_path: Path) -> None:
     lines.append(f"- **Source / 来源**: [{data.original_url}]({data.original_url})")
     lines.append(f"- **Extracted / 提取时间**: {data.extracted_at.strftime('%Y-%m-%d %H:%M')}")
     lines.append(f"- **Language / 语言**: {data.transcript_language or '—'}")
+    lines.append(f"- **OCR Provider / OCR 引擎**: {data.ocr_provider}")
     lines.append(f"- **Hashtags / 标签**: {tags_line}")
     lines.append("")
 
@@ -412,8 +512,8 @@ def run_pipeline(url: str, base_out_dir: Path, *, with_frames: bool) -> Path:
         print(f"⚠ scenedetect not found — skipping keyframe extraction")
         print(f"  Install: pip install scenedetect")
     if missing_ocr and with_frames:
-        print(f"⚠ tesseract not found — skipping OCR")
-        print(f"  Install: winget install UB-Mannheim.TesseractOCR")
+        print("⚠ 未找到 PaddleOCR 或 Tesseract — 跳过 OCR")
+        print("  Install (任选其一): pip install paddleocr | winget install UB-Mannheim.TesseractOCR")
 
     # Extract video ID from URL or resolve via yt-dlp
     match = re.search(r"/video/(\d+)", url)
@@ -450,14 +550,18 @@ def run_pipeline(url: str, base_out_dir: Path, *, with_frames: bool) -> Path:
     # Frames + OCR (depth mode, graceful degradation)
     frames: list[tuple[Path, float]] = []
     ocr_entries: list[tuple[float, str]] = []
+    ocr_provider = "none"
     if can_extract_frames:
         frames_dir = target_dir / "frames"
         frames = _extract_keyframes(result.video_path, frames_dir)
         if can_extract_ocr:
-            ocr_entries = _ocr_frames(frames)
+            ocr_entries, ocr_provider, fallback_reason = _ocr_frames(frames)
+            if fallback_reason:
+                print(f"  ⚠ OCR 降级: {fallback_reason}")
+            print(f"  🔍 OCR 引擎: {ocr_provider}")
             _write_ocr(ocr_entries, frames_dir / "ocr.txt")
         else:
-            print("  (OCR skipped — install tesseract to enable)")
+            print("  (OCR skipped — install PaddleOCR or Tesseract to enable)")
     else:
         print("  (Keyframe extraction skipped — install scenedetect to enable)")
 
@@ -473,6 +577,7 @@ def run_pipeline(url: str, base_out_dir: Path, *, with_frames: bool) -> Path:
             transcript_segments=transcript.segments,
             transcript_language=transcript.language,
             ocr_entries=ocr_entries,
+            ocr_provider=ocr_provider,
             frames=relative_frames,
         ),
         summary_path,

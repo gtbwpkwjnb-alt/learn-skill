@@ -18,6 +18,16 @@
 
 ### Extraction Method
 
+首选本机已安装的 `bilibili-cli`，它直接读取 B站字幕 API、浏览器 Cookie，并输出结构化时间线：
+
+```bash
+bili video "https://www.bilibili.com/video/BVxxxxxx" --subtitle-timeline --json
+```
+
+`learn` 会自动查找 PATH 或当前 Python 的 `Scripts/bili.exe`；未安装、未登录、无字幕或命令失败时才回退到以下通用路径，不会自动安装或触发登录。
+
+### Fallback Extraction Method
+
 Use the built-in `extract_douyin.py` (deep mode):
 ```bash
 python scripts/extract_douyin.py "<url>" --frames --out ./learn-output
@@ -55,14 +65,18 @@ After extraction, in `learn-output/<id>/`:
 yt-dlp --write-subs --sub-langs "zh-Hans,zh-CN,zh,en,ai-zh" "https://www.bilibili.com/video/BVxxxxxx"
 ```
 
-### Extraction Flow (Two-stage)
+### Extraction Flow (Three-stage)
 
-**Stage 1: Subtitle download**
+**Stage 1: B站专用字幕 provider**
+- `bilibili-cli --subtitle-timeline --json` 优先
+- 读取结构化字幕和视频元数据；字幕权限不足时返回明确降级原因
+
+**Stage 2: Generic subtitle download**
 - Uses yt-dlp to download official subtitles (prefers `zh-Hans, zh-CN, zh, en`)
 - Auto-downloads AI-generated subtitles as fallback (`ai-zh`)
 - Subtitle format: SRT
 
-**Stage 2: Whisper fallback**
+**Stage 3: Whisper fallback**
 - If no subtitles available, uses whisper for audio transcription
 - Command: `python -m hearsay ingest "<url>" -o <dir>/hearsay.md --transcribe`
 

@@ -1,11 +1,11 @@
 ---
-name: zhixi-learn
-version: "4.1.0"
-description: 学习+链接 → 全自动提取·AI结构化分析(1次调用)·章节总结·亮点·术语·闪卡·评分·导入思源
+name: learn
+version: "5.1.0"
+description: 学习+链接 → 自动提取·AI分析·闪卡·导入Obsidian
 user-invocable: true
 ---
 
-# zhixi-learn v4.1.0
+# zhixi-learn v5.1.0
 
 > **一条链接 → 全增强知识卡片。** AI 分类 + 亮点提取 + 深度思考 + 术语解释 + 评分 + 知识图谱 + 闪卡 + 章节总结 + 多知识库导入。双速自适应，零配置。
 >
@@ -28,7 +28,7 @@ yt-dlp  → 视频/字幕下载       [必要
 playwright → 浏览器自动化      [推荐
 faster-whisper → 音频转录      [必要
 scenedetect → 关键帧提取       [深度可选
-tesseract → OCR                [深度可选
+PaddleOCR → OCR（推荐，中英双语最优，Apache-2.0） [深度可选
 browser_cookie3 → 浏览器Cookie [辅助可选
 python    → Python 解释器路径   [必要]
 ```
@@ -38,11 +38,10 @@ python    → Python 解释器路径   [必要]
 🔍 Learn 环境自检报告
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ✅ ffmpeg         → /usr/bin/ffmpeg
-❌ tesseract      → MISSING (影响: 跳过OCR)
+❌ PaddleOCR      → MISSING (影响: 跳过OCR)
 ❌ scenedetect    → MISSING (影响: 跳过关键帧)
 ⚠️ 提示: 安装缺失项可提升深度模式质量
-     winget install UB-Mannheim.TesseractOCR
-     pip install scenedetect
+     pip install paddleocr scenedetect
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
@@ -64,8 +63,8 @@ python    → Python 解释器路径   [必要]
     "yt-dlp": {"found": true, "version": "2026.06.01"},
     "playwright": {"found": true, "version": "1.60.0"},
     "faster-whisper": {"found": true},
-    "scenedetect": {"found": false, "last_attempt": "2026-06-24"},
-    "tesseract": {"found": false, "last_attempt": "2026-06-24"},
+    "PaddleOCR": {"found": false, "last_attempt": "2026-06-24"},
+    "scenedetect": {"found": false, "last_attempt": "2026-06-24"}
     "browser_cookie3": {"found": true}
   },
   "platform_memory": {
@@ -126,14 +125,18 @@ else:
 
 用户消息含 **`学习+`**、**`learn+`**、**`知析`**、**`zhixi`** 等关键词 + 分享链接时自动触发。无链接则提示提供链接。
 
-### 链接提取规则（去除杂项）
+### 链接提取规则（分享文本、短链与推广参数）
 
-抖音/TikTok 分享文本含大量杂项（时间戳、表情、话题标签、复制提示），按以下规则提取纯净 URL：
+复制内容不等于可提取内容。必须先调用 `scripts/link_normalizer.py` 的规范化逻辑，再把 `canonical_url` 传给平台识别和下载器：
 
-1. 用正则 `https?://[a-zA-Z0-9./_-]+` 匹配消息中第一个 URL
-2. 检测是否是支持的平台域名：`douyin.com` / `tiktok.com` / `bilibili.com` / `youtube.com` / `iesdouyin.com`
-3. 不支持的 URL → 提示用户仅支持视频/音频链接
-4. 无 URL → 提示用户提供链接
+1. 从整段分享文案中提取全部 HTTP(S) URL，去掉表情、中文标点、引号和零宽字符。
+2. 当同一文本含推广页与视频/播客页时，优先选择已支持的平台链接，不取第一个 URL。
+3. 对 `v.douyin.com`、`b23.tv`、`youtu.be`、`vm.tiktok.com`、`xhslink.com` 等已知短链，最多跟随 5 次公网重定向；禁止解析 localhost、内网或非 HTTP(S) 目标。
+4. 移除 `utm_*`、`spm*`、`share_*`、`vd_source`、`fbclid`、`gclid` 等推广/追踪参数；保留 B站 `p/t`、微信签名参数、YouTube `v/t/list` 等内容参数。
+5. 规范化后的 URL 用于去重、平台识别、提取与最终来源；原始输入、短链解析结果、移除参数和失败原因写入任务进度，便于追溯。
+6. 本地音视频路径不经过 URL 清洗。短链解析不可用时保留已清洗的短链并继续尝试，不把网络错误误报为“无链接”。
+
+命令行使用 `--no-resolve-links` 可关闭短链网络解析；`--dry-run` 会显示规范化后的 URL 和移除的追踪参数。
 
 ## 前置条件
 
@@ -145,7 +148,7 @@ else:
 | playwright | 🔴 必需（抖音） | 浏览器自动化 → 网络拦截下载视频 | ⚠ `pip install playwright && playwright install chromium` |
 | faster-whisper | 🔴 必需 | 音频转录 | ⚠ `pip install faster-whisper` 尝试安装 |
 | yt-dlp | 🟢 辅助
-| tesseract | 🟡 深度模式
+| PaddleOCR | 🟡 深度模式 | OCR 文字提取 | ⚠ 跳过 OCR |
 | scenedetect | 🟡 深度模式 | 关键帧提取 | ⚠ 跳过关键帧 |
 | browser_cookie3 | 🟢 推荐 | 从浏览器提取 Cookie | ⚠ 跳过浏览器 Cookie 方式，使用无 Cookie 降级 |
 
@@ -166,7 +169,7 @@ else:
   ├─ 自判定模式（默认）：
   │   ├─ 播客/RSS/微信/本地.mp3 → 快速（元数据+字幕，~30秒）
   │   └─ 抖音/TikTok/B站/YouTube/本地.mp4 → 深度（元数据+字幕+关键帧+OCR，~3-10分）
-  ├─ 降级提示：深度模式缺 scenedetect/tesseract 时自动降为"浅深度"（无关键帧/OCR）
+  ├─ 降级提示：深度模式缺 scenedetect 或全部 OCR provider 时自动降为"浅深度"（无关键帧/OCR）
   ├─ 显式指定： "学习 快速 <链接>" 或 "学习 深度 <链接>"
   ├─ 风格控制（可选）：
   │   ├─ "简单点" → style=beginner（加类比、减术语）
@@ -176,13 +179,13 @@ else:
   ├─ 第2步：URL 清洗（去除分享杂项，提取纯净链接）
   ├─ 第3步：按平台路由提取：
   │   ├─ 抖音 → `python tools/zhixi-learn.py <url> --no-import`  # Playwright网络拦截
-  │   ├─ B站  → `python tools/zhixi-learn.py <url> --no-import`
+  │   ├─ B站  → `bilibili-cli 字幕时间线 → yt-dlp → ASR 兜底`
   │   ├─ 本地 → `python tools/zhixi-learn.py <local_path> --no-import`
   │   └─ 播客 → `python tools/zhixi-learn.py <url> --no-import`
-  ├─ 第4步：AI 综合分析（1次 DeepSeek 调用 → category/chapters/highlights/glossary/flashcards/rating）
+  ├─ 第4步：AI 综合分析（全文 Map 分段 → Reduce 汇总 → 原文证据 Verify）
   ├─ 第5步：知识图谱（语义关联：tags 交集匹配已有笔记）
   ├─ 第6步：组装增强 Markdown（关键帧截图 + 层级模板）
-  ├─ 第7步：导入思源/Obsidian（调用 import_to_siyuan）
+  ├─ 第7步：导入 Obsidian/思源（Obsidian 优先）
   └─ 第8步：汇报结果（含评分和链接）
 ```
 
@@ -193,9 +196,10 @@ else:
 > 核心命令（统一入口）：
 > - 抖音/TikTok/B站/播客/本地 → `python tools/zhixi-learn.py <url>`
 > - 小红书/通用网页 → `python scripts/extract_webpage.py <url>`
+- 通用网页深度爬取 → **Firecrawl MCP**（已预装，JS渲染/结构化提取）
 
 > **环境检测**：执行前运行 0a 综合自检。降级规则：
-> - 缺 tesseract → 跳过 OCR 和关键帧，继续转录
+> - PP-OCRv6（隔离环境）优先；旧 PaddleOCR 初始化失败时回退 Tesseract；都不可用才跳过 OCR，继续转录
 > - 缺 scenedetect → 跳过关键帧，继续转录
 > - 缺 ffmpeg → 无法提取，报安装命令后终止
 > - 缺 playwright → 仅影响抖音兜底路径
@@ -264,7 +268,9 @@ yt-dlp <url>
 > - 含 `media-audio` → 音频流 → 保存为 audio_source.mp4
 > - ffmpeg 合并：`ffmpeg -i video.mp4 -i audio_source.mp4 -c copy -map 0:v:0 -map 1:a:0 output.mp4`
 
-深度模式产物结构（`learn-output/<id>/`）：
+> **长视频转写恢复**：抖音/TikTok 深度提取器对超过 20 分钟的音频按 20 分钟切段（2 秒重叠）转写。每完成一段即在同目录写入 `transcription_progress.json`；同一音频再次执行时仅处理未完成分段。音频大小或修改时间变化会自动废弃旧进度，避免混用不同来源的转写结果。
+
+深度模式处理中工件结构（`learn-output/_tasks/<task_id>/`）：
 
 > 完整产物结构树和 Markdown 模板见 [references/output-format.md](references/output-format.md)
 
@@ -293,7 +299,7 @@ yt-dlp <url>
 >
 > 1. **Map** — 将转录切分为若干段落（每段 2-5 分钟），对每段独立调用 Map prompt 提取原子知识点
 > 2. **Reduce** — 汇总所有段落的提取结果：去重 → 矛盾消解 → 主题分组 → 置信度过滤 → 生成 JSON
-> 3. **Verify** — 二次验证每项提取结果，标记 ❌ 项重试最多 2 次
+> 3. **Verify** — 本地逐项核对 `evidence` 是否在原转录中出现；无证据的亮点、术语、章节、闪卡和深度问题不进入最终 Markdown
 
 **风格适配**（在 Map 阶段应用）：
 | 用户输入 | 效果 |
@@ -333,7 +339,7 @@ python scripts/assemble_md.py \
 python scripts/kb_router.py --file "learn-output/<slug>/final.md"
 ```
 
-自动检测已安装知识库（思源/Obsidian/Logseq/Trilium/Joplin/本地），优先尝试有 API 的，降级到文件复制，本地保存兜底。
+默认导入 Obsidian（仅复制 Markdown 与关键帧/资产，保持相对链接；不复制 HTML、转录、元数据和媒体）；未配置 Obsidian 时回退思源，再保留本地任务工件。Obsidian 笔记保存为 `<Vault>/learn/<YYYY>/<YYYY-MM>/<platform>/<title>--<task_id>/<title>.md`；成功导入后默认清理 `learn-output/_tasks/<task_id>/`，传入 `--keep-local` 可保留该任务工件。
 强制指定目标：`python scripts/kb_router.py --file "..." --force obsidian`
 
 > **导入前验证**：
@@ -341,6 +347,10 @@ python scripts/kb_router.py --file "learn-output/<slug>/final.md"
 > 2. 检查 API token 是否配置（环境变量或 `.env`）
 > 3. 如果目标不可达，自动降级到下一个候选或本地保存
 > 4. 导入后验证文档是否在知识库中可见
+
+### 任务与恢复
+
+每个任务在 `learn-output/_tasks/<task_id>/` 保存 `task.json`、`source.json`、`artifacts.json`、`analysis.json` 和媒体工件；全局任务账本为 `learn-output/.learn/tasks.sqlite3`。任务在媒体阶段后失败时，重试会复用已有 `summary.md`，不重复下载或转写。成功导入并清理工件后，账本会保留来源 URL 和最终 Vault 路径，不会重建任务目录。
 
 ### 第8步：更新自进化状态
 
@@ -390,8 +400,7 @@ pip install yt-dlp faster-whisper
 winget install Gyan.FFmpeg
 
 # 深度模式增强（推荐）
-pip install scenedetect playwright
-winget install UB-Mannheim.TesseractOCR
+pip install scenedetect playwright paddleocr
 playwright install chromium
 
 # Cookie 提取（可选）
