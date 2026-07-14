@@ -1,8 +1,8 @@
-# 知析 zhixi-learn v4.0
+# 知析 zhixi-learn v5.1.0
 
-> **Agent-Native Learning Pipeline.** One link → evidence-first Map-Reduce-Verify → hierarchical knowledge card with chapters, mindmap, highlights, glossary, flashcards → knowledge base import.
+> **Agent-Native Learning Pipeline.** Shared link or local media → link normalization → subtitle-first extraction or resilient transcription → keyframe OCR → evidence-first Map-Reduce-Verify → hierarchical knowledge card and knowledge base import.
 >
-> **Agent 原生学习管道。** 一条链接 → 全文 Map-Reduce-Verify → 层级化知识卡片（章节分解+思维导图+亮点+术语+闪卡）→ 知识库导入。
+> **Agent 原生学习管道。** 分享文案或本地音视频 → 短链/推广参数清洗 → 字幕优先与可恢复转写 → 关键帧 OCR → 全文 Map-Reduce-Verify → 层级化知识卡片（章节、思维导图、亮点、术语、闪卡）→ Obsidian/思源导入。
 
 ---
 

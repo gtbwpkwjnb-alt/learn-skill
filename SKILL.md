@@ -1,8 +1,6 @@
 ---
 name: learn
-version: "5.1.0"
-description: 学习+链接 → 自动提取·AI分析·闪卡·导入Obsidian
-user-invocable: true
+description: 学习+分享链接或本地音视频 → 清洗短链与推广参数、提取字幕或转写、关键帧 OCR、证据核验 AI 总结、闪卡与 Obsidian/思源 Markdown 导入。适用于抖音、B站、YouTube、播客及网页学习内容。
 ---
 
 # zhixi-learn v5.1.0
