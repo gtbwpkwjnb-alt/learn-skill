@@ -32,17 +32,21 @@ class ObsidianExportTests(unittest.TestCase):
             frames = source_dir / "frames"
             frames.mkdir()
             (frames / "001.jpg").write_bytes(b"image")
+            (frames / "unused.jpg").write_bytes(b"unused image")
             (source_dir / "source.mp4").write_bytes(b"large media")
             (source_dir / "metadata.json").write_text('{"source": "temporary"}', encoding="utf-8")
             (source_dir / "page.html").write_text("temporary page capture", encoding="utf-8")
             (source_dir / "transcript.txt").write_text("temporary transcript", encoding="utf-8")
             vault = Path(tmp) / "vault"
 
+            module.OBSIDIAN_LEARN_ROOT = "03-学习资料/自动导入（learn）"
             exported_note = module.export_to_obsidian(note, str(vault))
             self.assertIsNotNone(exported_note)
             assert exported_note is not None
             self.assertEqual(exported_note.name, "测试笔记.md")
+            self.assertIn("03-学习资料", str(exported_note))
             self.assertTrue((exported_note.parent / "frames" / "001.jpg").exists())
+            self.assertFalse((exported_note.parent / "frames" / "unused.jpg").exists())
             self.assertFalse((exported_note.parent / "source.mp4").exists())
             self.assertFalse((exported_note.parent / "summary.md").exists())
             self.assertFalse((exported_note.parent / "metadata.json").exists())

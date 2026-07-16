@@ -190,7 +190,7 @@ def assemble(
     flashcards: Optional[List[Dict[str, str]]] = None,
     flashcards_file: Optional[str] = None,
     task_id: str = "",
-    pipeline_version: str = "5.0",
+    pipeline_version: str = "5.1.1",
     out: Optional[str] = None,
 ) -> str:
     """组装增强版学习笔记 Markdown。

@@ -1,4 +1,4 @@
-# 知析 zhixi-learn v5.1.0
+# 知析 zhixi-learn v5.1.1
 
 > **Agent-Native Learning Pipeline.** Shared link or local media → link normalization → subtitle-first extraction or resilient transcription → keyframe OCR → evidence-first Map-Reduce-Verify → hierarchical knowledge card and knowledge base import.
 >

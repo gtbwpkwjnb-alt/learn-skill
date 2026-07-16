@@ -37,6 +37,24 @@ class TranscriptCleaningTests(unittest.TestCase):
         self.assertIn('"claim"', mapped)
         self.assertIn('"highlights"', reduced)
 
+    def test_map_parser_accepts_object_wrapped_facts(self):
+        facts = module._parse_map_facts_payload(
+            '{"facts":[{"claim":"事实","evidence_quote":"原文证据"}]}'
+        )
+        self.assertEqual(facts[0]["claim"], "事实")
+
+    def test_analysis_fallback_keeps_timestamped_source_lines(self):
+        original_key = module.DEEPSEEK_KEY
+        module.DEEPSEEK_KEY = ""
+        try:
+            result = module.generate_structured_analysis("标题", "[00:01] 可验证的原文。")
+        finally:
+            module.DEEPSEEK_KEY = original_key
+
+        self.assertEqual(result.category, "转录待整理")
+        self.assertTrue(result.summary)
+        self.assertEqual(result.highlights[0]["evidence"], "可验证的原文。")
+
     def test_map_reduce_verify_keeps_only_evidenced_items(self):
         original_key = module.DEEPSEEK_KEY
         original_call = module._call_deepseek

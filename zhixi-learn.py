@@ -52,7 +52,8 @@ TOOLS_DIR = SKILL_DIR
 DOUYIN2MD = TOOLS_DIR / "scripts" / "extract_douyin.py"
 DOUYIN_PLAYWRIGHT = TOOLS_DIR / "scripts" / "douyin_playwright_extract.py"
 PROJECT_ROOT = TOOLS_DIR.parent
-DEFAULT_OUT = PROJECT_ROOT / "learn-output"
+_configured_output_root = os.environ.get("LEARN_OUTPUT", "").strip()
+DEFAULT_OUT = Path(_configured_output_root).expanduser() if _configured_output_root else PROJECT_ROOT / "learn-output"
 REGISTRY_FILE = DEFAULT_OUT / ".registry.json"
 PROGRESS_FILE = DEFAULT_OUT / ".progress.json"
 
@@ -97,6 +98,10 @@ from learn_core.task_store import TaskStore
 
 # Obsidian (international users / 国际用户)
 OBSIDIAN_VAULT = os.environ.get("OBSIDIAN_VAULT", "")
+# Relative directory inside the vault for automatically imported learning notes.
+# Keep the generic "learn" default for other vaults; a knowledge base can opt
+# into its own collection structure through OBSIDIAN_LEARN_ROOT.
+OBSIDIAN_LEARN_ROOT = os.environ.get("OBSIDIAN_LEARN_ROOT", "learn")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # API 重试 & 错误分类 / API Retry & Error Classification
@@ -670,6 +675,51 @@ class StructuredAnalysis:
     verification: Dict = field(default_factory=dict)
 
 
+def _fallback_structured_analysis(transcript: str, reason: str) -> StructuredAnalysis:
+    """Keep the exported note useful when evidence analysis is unavailable.
+
+    This deliberately summarizes no new facts: it preserves a short list of
+    timestamped source lines so the Markdown can be imported and reviewed
+    instead of becoming an empty shell.
+    """
+    highlights: List[Dict] = []
+    for line in (transcript or "").splitlines():
+        match = re.match(r"^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.+)$", line.strip())
+        if not match:
+            continue
+        evidence = match.group(2).strip()
+        if evidence:
+            highlights.append({"time": match.group(1), "text": evidence, "evidence": evidence})
+        if len(highlights) >= 3:
+            break
+    return StructuredAnalysis(
+        category="转录待整理",
+        tags=["待整理"],
+        summary="自动结构化分析未获得可验证结果；已保留原始转写与时间戳，可直接导入知识库后继续复核。",
+        highlights=highlights,
+        verification={"fallback": True, "reason": reason, "verified": {}, "rejected": {}},
+    )
+
+
+def _parse_map_facts_payload(response: str) -> List[Dict]:
+    """Accept the documented list schema and common object wrappers safely."""
+    try:
+        payload = parse_json_payload(response, list)
+    except JsonPayloadError:
+        wrapped = parse_json_payload(response, dict)
+        for key in ("facts", "claims", "items", "data"):
+            items = wrapped.get(key)
+            if isinstance(items, list):
+                payload = items
+                break
+        else:
+            if isinstance(wrapped.get("claim"), str) and isinstance(wrapped.get("evidence_quote"), str):
+                payload = [wrapped]
+            else:
+                raise JsonPayloadError("Map JSON 未包含事实列表")
+    return [item for item in payload if isinstance(item, dict)]
+
+
 def _map_transcript_facts(title: str, chunks: List[str]) -> tuple[List[Dict], int]:
     facts: List[Dict] = []
     for index, chunk in enumerate(chunks, 1):
@@ -685,8 +735,7 @@ def _map_transcript_facts(title: str, chunks: List[str]) -> tuple[List[Dict], in
                 call_type="analysis_map", label=f"AI Map {index}/{len(chunks)}",
             )
             _record_api_call("analysis_map", f"{title}#{index}", "deepseek-chat", usage)
-            payload = parse_json_payload(response, list)
-            facts.extend(item for item in payload if isinstance(item, dict))
+            facts.extend(_parse_map_facts_payload(response))
         except Exception as e:
             print(f"  ⚠ Map 第 {index}/{len(chunks)} 段失败: {e}")
     return facts, len(chunks)
@@ -709,17 +758,19 @@ def generate_structured_analysis(title: str, transcript: str) -> StructuredAnaly
     
     if not DEEPSEEK_KEY:
         print("  ⚠ DEEPSEEK_API_KEY 未配置，跳过 AI 分析")
-        return result
+        return _fallback_structured_analysis(transcript, "DEEPSEEK_API_KEY 未配置")
     
     try:
         chunks = split_transcript(transcript, max_chars=MAP_CHUNK_CHARS)
+        if not chunks:
+            return _fallback_structured_analysis(transcript, "转写为空")
         expected_calls = len(chunks) + 1  # Map for each chunk, then one Reduce call.
         if not _check_analysis_api_budget(expected_calls):
-            return result
+            return _fallback_structured_analysis(transcript, "分析 API 预算不足")
         facts, chunk_count = _map_transcript_facts(title, chunks)
         if not facts:
             print("  ⚠ 未提取到可验证的原子知识点，跳过 Reduce")
-            return result
+            return _fallback_structured_analysis(transcript, "Map 未返回可用原子事实")
 
         print(f"  🧩 Map 完成: {chunk_count} 段 / {len(facts)} 条原子知识点")
         data = _reduce_analysis_facts(title, facts)
@@ -760,8 +811,10 @@ def generate_structured_analysis(title: str, transcript: str) -> StructuredAnaly
 
     except (JsonPayloadError, json.JSONDecodeError) as e:
         print(f"  ⚠ AI JSON 解析失败: {e}")
+        return _fallback_structured_analysis(transcript, f"AI JSON 解析失败: {e}")
     except Exception as e:
         print(f"  ⚠ AI 综合分析失败: {e}")
+        return _fallback_structured_analysis(transcript, f"AI 综合分析失败: {e}")
     
     return result
 
@@ -1314,16 +1367,23 @@ def export_to_obsidian(md_path: Path, vault_path: str) -> Optional[Path]:
         title = _safe_note_name(_frontmatter_value(markdown, "title"), md_path.stem)
         platform = _safe_note_name(_frontmatter_value(markdown, "platform"), "video")
         now = datetime.now()
-        dest_dir = Path(vault_path) / "learn" / str(now.year) / f"{now.year}-{now.month:02d}" / platform / f"{title}--{source_id}"
+        dest_dir = Path(vault_path) / OBSIDIAN_LEARN_ROOT / str(now.year) / f"{now.year}-{now.month:02d}" / platform / f"{title}--{source_id}"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        # A vault note needs only its Markdown and referenced visual assets.
-        # Source HTML, transcripts, metadata, and media stay in the task
-        # workspace and are removed after a verified import.
-        for source in md_path.parent.iterdir():
-            if source == md_path:
+        # A vault note needs only its Markdown and the images it references.
+        # Source HTML, transcripts, metadata, media, and unused frames stay in
+        # the task workspace and are removed after a verified import.
+        source_root = md_path.parent.resolve()
+        refs = re.findall(r"!\[[^\]]*\]\((?:<)?((?:frames|assets)/[^)\s>]+)", markdown)
+        for ref in dict.fromkeys(refs):
+            source = (source_root / ref).resolve()
+            try:
+                relative = source.relative_to(source_root)
+            except ValueError:
                 continue
-            if source.is_dir() and source.name in {"frames", "assets"}:
-                shutil.copytree(source, dest_dir / source.name, dirs_exist_ok=True)
+            if source.is_file():
+                destination = dest_dir / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
         dest = dest_dir / f"{title}.md"
         shutil.copy2(md_path, dest)
         print(f"  ✅ 已导出到 Obsidian: {dest}")
@@ -1368,23 +1428,53 @@ def _playwright_fallback_douyin(url: str, out_dir: Path, with_frames: bool = Fal
         from scripts.douyin_playwright_extract import download_video, extract_video
 
         target_dir = out_dir / f"douyin_playwright_{hashlib.md5(url.encode()).hexdigest()[:12]}"
+        target_dir.mkdir(parents=True, exist_ok=True)
         print(f"  ▶ Playwright 网络拦截兜底: {DOUYIN_PLAYWRIGHT.name}")
         metadata = extract_video(url, target_dir)
         (target_dir / "metadata.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        video_urls = list(metadata.get("video_urls", []) or [])
-        video_urls.sort(key=lambda value: ("media-audio" in value, "video" not in value))
+        media_urls = [value for value in metadata.get("video_urls", []) or []
+                      if isinstance(value, str) and value.startswith(("http://", "https://"))]
+        audio_urls = [value for value in media_urls if "media-audio" in value]
+        video_urls = [value for value in media_urls if "media-video" in value]
+        video_urls.extend(value for value in media_urls if value not in video_urls and "media-audio" not in value)
+
         for video_url in video_urls:
             video_path = target_dir / "video.mp4"
+            video_path.unlink(missing_ok=True)
             if not download_video(video_url, video_path):
                 continue
             if not video_path.exists() or video_path.stat().st_size < 1024:
                 video_path.unlink(missing_ok=True)
                 continue
-            transcript_path = _whisper_fallback(video_path, target_dir)
+            media_path = video_path
+            if "media-video" in video_url and audio_urls:
+                merged_path = target_dir / "merged.mp4"
+                merged_path.unlink(missing_ok=True)
+                for audio_url in audio_urls:
+                    audio_path = target_dir / "audio_source.mp4"
+                    audio_path.unlink(missing_ok=True)
+                    if not download_video(audio_url, audio_path):
+                        continue
+                    merge = subprocess.run(
+                        ["ffmpeg", "-y", "-i", str(video_path), "-i", str(audio_path),
+                         "-c", "copy", "-map", "0:v:0", "-map", "1:a:0", str(merged_path)],
+                        capture_output=True, text=True, timeout=TIMEOUT_WHISPER,
+                    )
+                    if merge.returncode == 0 and merged_path.exists() and merged_path.stat().st_size >= 1024:
+                        media_path = merged_path
+                        break
+                    print(f"  ⚠ 音视频合并失败: {merge.stderr.strip()[-300:]}")
+                    merged_path.unlink(missing_ok=True)
+                if media_path == video_path:
+                    print("  ⚠ Playwright 已捕获分离音频，但未能合并；尝试下一视频流")
+                    continue
+
+            transcript_path = _whisper_fallback(media_path, target_dir)
             if not transcript_path:
-                return None
+                print("  ⚠ 当前视频流转写失败，尝试下一候选流")
+                continue
             video_info = metadata.get("video_element", {}) or {}
             _write_summary(
                 target_dir / "summary.md", url, "douyin",

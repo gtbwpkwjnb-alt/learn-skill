@@ -52,6 +52,52 @@ class CliTaskIntegrationTests(unittest.TestCase):
                     expected,
                 )
 
+    def test_playwright_merges_separated_douyin_streams_before_whisper(self):
+        module = _load_cli_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp)
+            metadata = {
+                "title": "测试抖音", "video_element": {"duration": 12},
+                "video_urls": [
+                    "https://media.example/media-audio.mp4",
+                    "https://media.example/media-video.mp4",
+                ],
+            }
+
+            def fake_download(_url, path):
+                Path(path).write_bytes(b"stream-data" * 256)
+                return True
+
+            def fake_ffmpeg(command, **_kwargs):
+                Path(command[-1]).write_bytes(b"merged-media" * 256)
+                return SimpleNamespace(returncode=0, stderr="")
+
+            def fake_whisper(path, out_dir):
+                self.assertEqual(Path(path).name, "merged.mp4")
+                transcript = Path(out_dir) / "transcript.txt"
+                transcript.write_text("[00:01] 原文", encoding="utf-8")
+                return transcript
+
+            def fake_summary(path, *_args, **_kwargs):
+                Path(path).write_text("# summary", encoding="utf-8")
+
+            with patch("scripts.douyin_playwright_extract.extract_video", return_value=metadata), \
+                 patch("scripts.douyin_playwright_extract.download_video", side_effect=fake_download), \
+                 patch.object(module.subprocess, "run", side_effect=fake_ffmpeg), \
+                 patch.object(module, "_whisper_fallback", side_effect=fake_whisper), \
+                 patch.object(module, "_write_summary", side_effect=fake_summary):
+                summary = module._playwright_fallback_douyin(
+                    "https://www.douyin.com/video/1", task_dir
+                )
+
+            self.assertIsNotNone(summary)
+            assert summary is not None
+            self.assertTrue(summary.is_file())
+            target_id = hashlib.md5("https://www.douyin.com/video/1".encode()).hexdigest()[:12]
+            target = task_dir / f"douyin_playwright_{target_id}"
+            self.assertTrue((target / "audio_source.mp4").exists())
+            self.assertTrue((target / "merged.mp4").exists())
+
     def test_douyin_task_writes_manifest_analysis_and_obsidian_markdown(self):
         module = _load_cli_module()
         with tempfile.TemporaryDirectory() as tmp:
