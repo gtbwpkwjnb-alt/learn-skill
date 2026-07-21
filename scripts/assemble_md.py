@@ -3,7 +3,7 @@
 Markdown 组装脚本 v3.5 — 将所有组件拼接为增强版学习笔记 Markdown。
 
 新模板含：元数据 → AI分类 → AI总结 → 内容亮点 → 深度思考 → 术语解释
-         → 内容评分 → 知识图谱 → 章节总结 → 内容转录 → 闪卡
+         → 内容评分 → 知识图谱 → 章节总结 → 闪卡
 
 用法:
     python assemble_md.py \
@@ -190,7 +190,8 @@ def assemble(
     flashcards: Optional[List[Dict[str, str]]] = None,
     flashcards_file: Optional[str] = None,
     task_id: str = "",
-    pipeline_version: str = "5.1.1",
+    pipeline_version: str = "5.2.0",
+    include_transcript: bool = False,
     out: Optional[str] = None,
 ) -> str:
     """组装增强版学习笔记 Markdown。
@@ -214,6 +215,7 @@ def assemble(
         related_notes: 相关笔记列表 [{"title": "...", "relation": "tag_name"}, ...]
         flashcards: 闪卡列表 (与 flashcards_file 二选一)
         flashcards_file: 闪卡 JSON 文件路径
+        include_transcript: 是否在最终 Markdown 中嵌入全文转录（默认不嵌入）
         out: 输出文件路径（可选）
 
     Returns:
@@ -346,9 +348,11 @@ def assemble(
         )
 
     # ── Transcript section ──
-    transcript_section = TRANSCRIPT_TEMPLATE.format(
-        transcript=transcript if transcript else "_(待转录 / pending transcription)_"
-    )
+    transcript_section = ""
+    if include_transcript:
+        transcript_section = TRANSCRIPT_TEMPLATE.format(
+            transcript=transcript if transcript else "_(待转录 / pending transcription)_"
+        )
 
     # ── Flashcards section ──
     flashcards_section = ""
@@ -432,6 +436,10 @@ def main():
     transcript_group = parser.add_mutually_exclusive_group()
     transcript_group.add_argument("--transcript", default="", help="转录文本")
     transcript_group.add_argument("--transcript-file", default="", help="转录文件路径")
+    parser.add_argument(
+        "--include-transcript", action="store_true",
+        help="在最终 Markdown 中嵌入全文转录（默认仅保留在任务工件）",
+    )
 
     flashcards_group = parser.add_mutually_exclusive_group()
     flashcards_group.add_argument("--flashcards", default="", help="闪卡 JSON 字符串")
@@ -474,6 +482,7 @@ def main():
         related_notes=related_notes,
         flashcards=flashcards,
         flashcards_file=args.flashcards_file or None,
+        include_transcript=args.include_transcript,
         out=args.out,
     )
 

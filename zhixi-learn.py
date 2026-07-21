@@ -20,7 +20,7 @@ Outputs: SiYuan (auto-start), Obsidian vault, or plain local markdown.
     输出: 思源笔记（自动启动）、Obsidian、或纯本地 Markdown。
 """
 
-import sys, os, re, json, time, shutil, hashlib, subprocess, tempfile
+import sys, os, re, json, time, shutil, hashlib, subprocess, tempfile, importlib.util
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Tuple
@@ -42,6 +42,54 @@ if _ENV_FILE.exists():
             _k, _v = _k.strip(), _v.strip().strip('"').strip("'")
             if _k not in os.environ:
                 os.environ[_k] = _v
+
+
+def _module_available(name: str) -> bool:
+    return importlib.util.find_spec(name) is not None
+
+
+def _reexec_with_compatible_python() -> None:
+    """Use an installed Python that has the media stack when PATH selects another one."""
+    required = ("yt_dlp", "playwright", "faster_whisper")
+    if all(_module_available(name) for name in required):
+        return
+    if os.environ.get("ZHIXI_LEARN_RUNTIME_SELECTED") == "1":
+        return
+
+    candidates = []
+    configured = os.environ.get("PYTHON_BIN", "").strip()
+    if configured:
+        candidates.append(configured)
+    try:
+        launcher = shutil.which("py")
+        if launcher:
+            listing = subprocess.check_output(
+                [launcher, "-0p"], text=True, encoding="utf-8", errors="replace", timeout=5
+            )
+            candidates.extend(re.findall(r"([A-Za-z]:\\[^\r\n]*python\.exe)", listing, re.I))
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    for candidate in dict.fromkeys(candidates):
+        if os.path.normcase(os.path.abspath(candidate)) == os.path.normcase(os.path.abspath(sys.executable)):
+            continue
+        probe = "import importlib.util; raise SystemExit(not all(importlib.util.find_spec(n) for n in ('yt_dlp', 'playwright', 'faster_whisper')))"
+        try:
+            result = subprocess.run([candidate, "-c", probe], timeout=10, check=False)
+        except OSError:
+            continue
+        if result.returncode == 0:
+            env = os.environ.copy()
+            env["ZHIXI_LEARN_RUNTIME_SELECTED"] = "1"
+            raise SystemExit(
+                subprocess.call(
+                    [candidate, str(Path(__file__).resolve()), *sys.argv[1:]], env=env
+                )
+            )
+
+
+if __name__ == "__main__":
+    _reexec_with_compatible_python()
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Constants / 常量
@@ -91,9 +139,11 @@ URL_INTERVAL = 1.0               # 各 URL 处理间延迟（秒）
 
 from scripts.analysis_pipeline import JsonPayloadError, parse_json_payload, split_transcript, verify_analysis_payload
 from scripts.bilibili_provider import fetch_bilibili_subtitles
+from scripts.douyin_profile import enumerate_profile_videos, is_profile_url, write_profile_report
 from scripts.link_normalizer import LinkNormalizationError, normalize_input
 from learn_core.models import TaskStage
 from learn_core.providers.douyin import DouyinProvider
+from learn_core.skill_state import SkillState
 from learn_core.task_store import TaskStore
 
 # Obsidian (international users / 国际用户)
@@ -313,7 +363,7 @@ def detect_network() -> NetworkEnv:
 # ═══════════════════════════════════════════════════════════════════════════
 
 PLATFORM_PATTERNS = {
-    "douyin":      [r"(?:v\.douyin\.com|www\.douyin\.com/video|www\.iesdouyin\.com/share/video|douyin\.com/user/.*\bmodal_id=)"],
+    "douyin":      [r"(?:v\.douyin\.com|www\.douyin\.com/video|www\.iesdouyin\.com/share/video|douyin\.com/(?:share/)?user/)"],
     "tiktok":      [r"(?:tiktok\.com|vm\.tiktok\.com)"],
     "bilibili":    [r"bilibili\.com/video/", r"(?:b23\.tv|bili2233\.cn)/"],
     "youtube":     [r"(?:youtube\.com/watch|youtu\.be/)"],
@@ -933,8 +983,8 @@ def ensure_ffmpeg():
 # Extraction tool wrappers / 提取工具封装
 # ═══════════════════════════════════════════════════════════════════════════
 
-def run_douyin(url: str, out_dir: Path, with_frames: bool = False) -> Optional[Path]:
-    """Douyin/TikTok via tiktok-extractor / 抖音/TikTok 提取"""
+def _run_douyin_primary(url: str, out_dir: Path, with_frames: bool = False) -> Tuple[Optional[Path], str]:
+    """Run the fast yt-dlp-backed extractor and preserve its failure reason."""
     cmd = [PYTHON, str(DOUYIN2MD), url, "--out", str(out_dir)]
     if with_frames:
         cmd.append("--frames")
@@ -942,14 +992,42 @@ def run_douyin(url: str, out_dir: Path, with_frames: bool = False) -> Optional[P
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_SUBPROCESS)
     if result.returncode != 0:
         print(f"  ❌ 提取失败: {result.stderr.strip()}", file=sys.stderr)
-        return _playwright_fallback_douyin(url, out_dir, with_frames)
+        return None, result.stderr.strip()
     for line in result.stdout.splitlines():
         if "完成" in line and "→" in line:
             p = Path(line.split("→")[-1].strip())
             if p.exists():
-                return p
+                return p, ""
     candidates = list(out_dir.rglob("summary.md"))
-    return max(candidates, key=lambda p: p.stat().st_mtime) if candidates else None
+    return (max(candidates, key=lambda p: p.stat().st_mtime), "") if candidates else (None, "extractor returned no summary.md")
+
+
+def run_douyin_routed(
+    url: str, out_dir: Path, with_frames: bool = False,
+    preferred_method: str = "yt-dlp",
+) -> Tuple[Optional[Path], str, bool, str]:
+    """Return (summary, actual_method, cookie_issue, last_error)."""
+    if preferred_method == "playwright_intercept":
+        print("  🧠 平台记忆：上次抖音使用 Playwright，优先复用该路径")
+        summary = _playwright_fallback_douyin(url, out_dir, with_frames)
+        if summary:
+            return summary, "playwright_intercept", False, ""
+
+    summary, error = _run_douyin_primary(url, out_dir, with_frames)
+    cookie_issue = "cookie" in error.lower()
+    if summary:
+        return summary, "yt-dlp", cookie_issue, ""
+
+    if preferred_method != "playwright_intercept":
+        summary = _playwright_fallback_douyin(url, out_dir, with_frames)
+        if summary:
+            return summary, "playwright_intercept", cookie_issue, ""
+    return None, "", cookie_issue, error or "all Douyin extraction methods failed"
+
+
+def run_douyin(url: str, out_dir: Path, with_frames: bool = False) -> Optional[Path]:
+    """Backward-compatible single-result wrapper used by integrations."""
+    return run_douyin_routed(url, out_dir, with_frames)[0]
 
 
 def run_bilibili(url: str, out_dir: Path, env: NetworkEnv) -> Optional[Path]:
@@ -1207,7 +1285,8 @@ def _write_summary(md_path: Path, url: str, platform: str,
                    flashcards: Optional[List[Dict]] = None,
                    rating_detail: Optional[Dict] = None,
                    task_id: str = "",
-                   transcript_text: Optional[str] = None):
+                   transcript_text: Optional[str] = None,
+                   include_transcript: bool = True):
     """Write hierarchical summary.md with all sections / 写入层级化Markdown"""
     transcript = transcript_text or ""
     if not transcript and transcript_path and transcript_path.exists():
@@ -1227,6 +1306,7 @@ def _write_summary(md_path: Path, url: str, platform: str,
             deep_thinking=deep_thinking, glossary=glossary,
             rating=rating, chapters=chapters,
             related_notes=related_notes, flashcards=flashcards, task_id=task_id,
+            include_transcript=include_transcript,
         )
     except ImportError:
         # ── Built-in hierarchical template (no external deps) ──
@@ -1307,9 +1387,11 @@ rating: {rating if rating else '""'}
 | **Category / 主题** | {category} |
 | **Tags / 标签** | {tags_display} |
 
----
+"""
+        if include_transcript:
+            md += f"""
 
-## 📝 完整转录
+## 📝 Transcript / 内容转录
 
 {transcript if transcript else '(待转录 / pending transcription)'}
 """
@@ -1476,11 +1558,26 @@ def _playwright_fallback_douyin(url: str, out_dir: Path, with_frames: bool = Fal
                 print("  ⚠ 当前视频流转写失败，尝试下一候选流")
                 continue
             video_info = metadata.get("video_element", {}) or {}
+            visual_evidence = None
+            if with_frames:
+                from scripts.extract_douyin import extract_visual_evidence
+                visual_evidence = extract_visual_evidence(media_path, target_dir)
             _write_summary(
                 target_dir / "summary.md", url, "douyin",
-                metadata.get("title", "Douyin video"), "",
+                metadata.get("title", "Douyin video"), metadata.get("author", ""),
                 int(video_info.get("duration") or 0), transcript_path,
             )
+            if visual_evidence:
+                with (target_dir / "summary.md").open("a", encoding="utf-8") as summary_file:
+                    summary_file.write("\n## 🖼 Visual Evidence / 视觉证据\n\n")
+                    for frame in visual_evidence.get("frames", []):
+                        summary_file.write(
+                            f"![{frame['timestamp']:.1f}s]({frame['path']})\n"
+                        )
+                    for entry in visual_evidence.get("ocr", []):
+                        summary_file.write(
+                            f"- [{_format_duration(int(entry['timestamp']))}] {entry['text']}\n"
+                        )
             return target_dir / "summary.md"
         print("  ⚠ Playwright 未捕获到可下载的视频流")
         return None
@@ -1564,14 +1661,18 @@ def _whisper_fallback_bilibili(url: str, out_dir: Path) -> Optional[Path]:
 
 
 def author_from_md(md_content: str) -> str:
-    """Extract author from markdown frontmatter."""
+    """Extract author from frontmatter or extractor metadata sections."""
     m = re.search(r"^author:\s*\"(.+?)\"", md_content, re.MULTILINE)
+    if not m:
+        m = re.search(r"^- \*\*Author / 作者\*\*:\s*(.+)$", md_content, re.MULTILINE)
     return m.group(1).strip() if m else ""
 
 
 def duration_from_md(md_content: str) -> int:
-    """Extract duration (in seconds) from markdown frontmatter."""
+    """Extract duration (in seconds) from frontmatter or metadata sections."""
     m = re.search(r"^duration:\s*\"(.+?)\"", md_content, re.MULTILINE)
+    if not m:
+        m = re.search(r"^- \*\*Duration / 时长\*\*:\s*(.+)$", md_content, re.MULTILINE)
     if not m:
         return 0
     dur_str = m.group(1).strip()
@@ -1581,6 +1682,35 @@ def duration_from_md(md_content: str) -> int:
     elif len(parts) == 2:
         return parts[0] * 60 + parts[1]
     return 0
+
+
+def transcript_for_analysis(md_path: Path, md_content: str) -> str:
+    """Prefer the raw task artifact; legacy summaries remain a compatibility fallback."""
+    transcript_path = md_path.parent / "transcript.txt"
+    if transcript_path.is_file():
+        text = transcript_path.read_text(encoding="utf-8").strip()
+        if text:
+            return text
+    return md_content.split("## 📝", 1)[-1].strip() if "## 📝" in md_content else md_content
+
+
+def attach_visual_evidence(chapters: List[Dict], media_dir: Path) -> List[Dict]:
+    """Attach extracted frame paths to chapters without changing chapter evidence text."""
+    evidence_path = media_dir / "visual_evidence.json"
+    if not chapters or not evidence_path.is_file():
+        return chapters
+    try:
+        frames = json.loads(evidence_path.read_text(encoding="utf-8")).get("frames", [])
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return chapters
+    if not frames:
+        return chapters
+    enriched = [dict(chapter) for chapter in chapters]
+    for index, chapter in enumerate(enriched):
+        if not chapter.get("screenshot"):
+            frame = frames[min(index, len(frames) - 1)]
+            chapter["screenshot"] = str(frame.get("path", ""))
+    return enriched
 
 
 def _write_temp_cookie(cookie: str) -> str:
@@ -1708,6 +1838,51 @@ def cleanup_task_workspace(task_dir: Path, output_root: Path) -> bool:
         return False
 
 
+def expand_douyin_profiles(
+    raw_inputs: List[str], out_dir: Path, *, resolve_short_links: bool = True,
+) -> Tuple[List[str], int]:
+    """Expand profile inputs to canonical public video URLs and persist an audit report."""
+    expanded: List[str] = []
+    seen: set[str] = set()
+    failures = 0
+    for raw_input in raw_inputs:
+        try:
+            link = normalize_input(raw_input, resolve_short_links=resolve_short_links)
+        except LinkNormalizationError:
+            if raw_input not in seen:
+                expanded.append(raw_input)
+                seen.add(raw_input)
+            continue
+        if not is_profile_url(link.canonical_url):
+            if raw_input not in seen:
+                expanded.append(raw_input)
+                seen.add(raw_input)
+            continue
+        print(f"👤 正在枚举抖音主页: {link.canonical_url}")
+        try:
+            result = enumerate_profile_videos(link.canonical_url)
+            report_path = write_profile_report(result, out_dir)
+        except Exception as error:
+            failures += 1
+            print(f"❌ 抖音主页枚举失败: {error}")
+            continue
+        print(
+            f"   页面作品数: {result.displayed_count if result.displayed_count is not None else '未知'} | "
+            f"本次公开可访问: {len(result.videos)} | 分页响应: {result.response_pages}"
+        )
+        if result.count_mismatch:
+            print("   ⚠ 计数不一致，原因待核验；不推断为私密或删除")
+        print(f"   枚举报告: {report_path}")
+        if not result.videos:
+            failures += 1
+            continue
+        for video in result.videos:
+            if video.url not in seen:
+                expanded.append(video.url)
+                seen.add(video.url)
+    return expanded, failures
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Main / 主流程
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1715,7 +1890,8 @@ def cleanup_task_workspace(task_dir: Path, output_root: Path) -> bool:
 def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
                    with_frames: bool = False, no_import: bool = False,
                    extract_only: bool = False, resolve_short_links: bool = True,
-                   keep_local: bool = False) -> bool:
+                   keep_local: bool = False,
+                   skill_state: Optional[SkillState] = None) -> bool:
     """Process one copied link/message after normalizing it to a content URL."""
     try:
         link = normalize_input(raw_input, resolve_short_links=resolve_short_links)
@@ -1746,6 +1922,11 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
     if status == "need_browser":
         print(f"❌ {platform} 需要浏览器（Edge/Chrome）→ 当前不可用，请安装 Edge 或 Chrome")
         return False
+    if skill_state:
+        missing = skill_state.missing_required(platform)
+        if missing:
+            print(f"❌ 必要依赖缺失: {', '.join(missing)}")
+            return False
 
     task_store = TaskStore(out_dir)
     task = task_store.create_or_resume(
@@ -1787,7 +1968,17 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
         print(f"  ↩ 复用已有提取工件: {md_path}")
     try:
         if not md_path and platform in ("douyin", "tiktok"):
-            md_path = run_douyin(url, task_dir, with_frames)
+            if skill_state:
+                preferred = skill_state.preferred_method("douyin")
+                md_path, extraction_method, cookie_issue, extraction_error = run_douyin_routed(
+                    url, task_dir, with_frames, preferred_method=preferred,
+                )
+                skill_state.record_extraction(
+                    "douyin", success=bool(md_path), method=extraction_method,
+                    error=extraction_error, cookie_issue=cookie_issue,
+                )
+            else:
+                md_path = run_douyin(url, task_dir, with_frames)
             # 抖音兜底：如果 extract_douyin 失败，用 yt-dlp + whisper 直接下载
             if not md_path and DEEPSEEK_KEY:
                 print(f"  ⚠ 抖音提取失败，尝试 yt-dlp + whisper 兜底...")
@@ -1831,12 +2022,14 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
     # Read content / 读取内容
     md_content = md_path.read_text(encoding="utf-8")
     title_match = re.search(r"^title:\s*\"(.+?)\"", md_content, re.MULTILINE)
+    if not title_match:
+        title_match = re.search(r"^#\s+(.+)$", md_content, re.MULTILINE)
     title = title_match.group(1) if title_match else md_path.stem
 
     # ── AI 分析：统一调用（取代旧的6步串行链）──
     save_progress(task_id, "ai_analysis")
     task_store.transition(task_id, TaskStage.ANALYZING)
-    transcript_text = md_content.split("## 📝")[-1].strip() if "## 📝" in md_content else md_content
+    transcript_text = transcript_for_analysis(md_path, md_content)
     
     ai_result = generate_structured_analysis(title, transcript_text)
     save_progress(task_id, "ai_analysis", {"verification": ai_result.verification})
@@ -1863,7 +2056,7 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
             transcript_text=transcript_text,
             category=ai_result.category, tags=ai_result.tags,
             summary=ai_result.summary,
-            chapters=ai_result.chapters,
+            chapters=attach_visual_evidence(ai_result.chapters, md_path.parent),
             highlights=ai_result.highlights,
             deep_thinking=ai_result.deep_questions,
             glossary=ai_result.glossary,
@@ -1872,6 +2065,7 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
             flashcards=ai_result.flashcards,
             related_notes=related_notes,
             task_id=task_id,
+            include_transcript=False,
         )
     except Exception as e:
         task_store.fail(task_id, str(e), data={"during": "markdown_render"})
@@ -1972,6 +2166,11 @@ def main():
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    skill_state = SkillState(out_dir)
+    environment_report = skill_state.check_environment()
+    skill_state.print_environment_report(environment_report)
+    print()
+
     # Detect environment / 检测环境
     print("🌐 正在检测网络环境...")
     env = detect_network()
@@ -2000,6 +2199,13 @@ def main():
         print("\n[dry-run] 未实际执行")
         sys.exit(0)
 
+    urls, profile_failures = expand_douyin_profiles(
+        urls, out_dir, resolve_short_links=resolve_short_links,
+    )
+    if not urls:
+        print("❌ 没有可处理的视频链接")
+        sys.exit(1)
+
     # ── API 安全防护检查 ──────────────────────────────────────────────────────
     if not _check_api_safety(len(urls)):
         sys.exit(1)
@@ -2007,7 +2213,10 @@ def main():
     # Process all URLs / 批量处理
     success = 0; fail = 0
     for raw_input in urls:
-        if process_single(raw_input, env, out_dir, with_frames, no_import, extract_only, resolve_short_links, keep_local):
+        if process_single(
+            raw_input, env, out_dir, with_frames, no_import, extract_only,
+            resolve_short_links, keep_local, skill_state,
+        ):
             success += 1
         else:
             fail += 1
@@ -2023,6 +2232,7 @@ def main():
     print(f"    今日: {today_count} 次 / 累计: {total_count} 次")
     if total_tokens:
         print(f"    Token: {total_tokens:,} (≈ ${total_cost:.4f})")
+    fail += profile_failures
     if fail > 0:
         print(f"    ⚠ 失败: {fail} 个 URL")
     print(f"  📋 详情见: {API_CALL_LOG}")

@@ -53,11 +53,14 @@ class CliTaskIntegrationTests(unittest.TestCase):
                 )
 
     def test_playwright_merges_separated_douyin_streams_before_whisper(self):
+        from scripts import douyin_playwright_extract
+        from scripts import extract_douyin
+
         module = _load_cli_module()
         with tempfile.TemporaryDirectory() as tmp:
             task_dir = Path(tmp)
             metadata = {
-                "title": "测试抖音", "video_element": {"duration": 12},
+                "title": "测试抖音", "author": "测试作者", "video_element": {"duration": 12},
                 "video_urls": [
                     "https://media.example/media-audio.mp4",
                     "https://media.example/media-video.mp4",
@@ -78,16 +81,25 @@ class CliTaskIntegrationTests(unittest.TestCase):
                 transcript.write_text("[00:01] 原文", encoding="utf-8")
                 return transcript
 
-            def fake_summary(path, *_args, **_kwargs):
+            summary_args = {}
+
+            def fake_summary(path, _url, _platform, _title, author, *_args, **_kwargs):
+                summary_args["author"] = author
                 Path(path).write_text("# summary", encoding="utf-8")
 
-            with patch("scripts.douyin_playwright_extract.extract_video", return_value=metadata), \
-                 patch("scripts.douyin_playwright_extract.download_video", side_effect=fake_download), \
+            visual = {
+                "frames": [{"path": "frames/scene_001.jpg", "timestamp": 1.0}],
+                "ocr": [{"timestamp": 1.0, "text": "画面文字"}],
+            }
+
+            with patch.object(douyin_playwright_extract, "extract_video", return_value=metadata), \
+                 patch.object(douyin_playwright_extract, "download_video", side_effect=fake_download), \
                  patch.object(module.subprocess, "run", side_effect=fake_ffmpeg), \
                  patch.object(module, "_whisper_fallback", side_effect=fake_whisper), \
-                 patch.object(module, "_write_summary", side_effect=fake_summary):
+                 patch.object(module, "_write_summary", side_effect=fake_summary), \
+                 patch.object(extract_douyin, "extract_visual_evidence", return_value=visual) as visual_mock:
                 summary = module._playwright_fallback_douyin(
-                    "https://www.douyin.com/video/1", task_dir
+                    "https://www.douyin.com/video/1", task_dir, with_frames=True,
                 )
 
             self.assertIsNotNone(summary)
@@ -97,6 +109,9 @@ class CliTaskIntegrationTests(unittest.TestCase):
             target = task_dir / f"douyin_playwright_{target_id}"
             self.assertTrue((target / "audio_source.mp4").exists())
             self.assertTrue((target / "merged.mp4").exists())
+            self.assertEqual(summary_args["author"], "测试作者")
+            visual_mock.assert_called_once()
+            self.assertIn("画面文字", summary.read_text(encoding="utf-8"))
 
     def test_douyin_task_writes_manifest_analysis_and_obsidian_markdown(self):
         module = _load_cli_module()
@@ -112,7 +127,7 @@ class CliTaskIntegrationTests(unittest.TestCase):
                 summary.parent.mkdir(parents=True, exist_ok=True)
                 summary.write_text(
                     '---\ntitle: "测试视频"\nauthor: "作者"\nduration: "00:12"\n---\n\n'
-                    "## 📝\n[00:01] 原始证据文本。",
+                    "## 📝\n[00:01] 原始证据文本。\n[00:02] 不应进入最终笔记的全文句子。",
                     encoding="utf-8",
                 )
                 return summary
@@ -142,6 +157,7 @@ class CliTaskIntegrationTests(unittest.TestCase):
             markdown = note.read_text(encoding="utf-8")
             self.assertIn('task_id: "', markdown)
             self.assertIn("原始证据文本", markdown)
+            self.assertNotIn("不应进入最终笔记的全文句子", markdown)
 
     def test_successful_vault_export_cleans_local_task_by_default(self):
         module = _load_cli_module()

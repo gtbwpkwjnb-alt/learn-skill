@@ -53,6 +53,22 @@ class AnalysisPipelineTests(unittest.TestCase):
         self.assertIn("> 证据：章节原文", markdown)
         self.assertIn("> 证据：闪卡原文", markdown)
 
+    def test_markdown_renderer_omits_full_transcript_by_default(self):
+        markdown = assemble(
+            title="测试", url="https://example.com", platform="test",
+            transcript="这段全文只用于内部分析",
+        )
+        self.assertNotIn("Transcript / 内容转录", markdown)
+        self.assertNotIn("这段全文只用于内部分析", markdown)
+
+    def test_markdown_renderer_can_include_transcript_explicitly(self):
+        markdown = assemble(
+            title="测试", url="https://example.com", platform="test",
+            transcript="调试转录", include_transcript=True,
+        )
+        self.assertIn("Transcript / 内容转录", markdown)
+        self.assertIn("调试转录", markdown)
+
 
 if __name__ == "__main__":
     unittest.main()

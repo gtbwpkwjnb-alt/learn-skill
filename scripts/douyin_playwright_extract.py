@@ -11,11 +11,10 @@ import sys
 import time
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright
-
-
 def extract_video(url: str, output_dir: Path) -> dict:
     """Navigate to Douyin video, intercept network, extract metadata and video URL."""
+    from playwright.sync_api import sync_playwright
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     found_urls = []
@@ -46,7 +45,7 @@ def extract_video(url: str, output_dir: Path) -> dict:
             # video content type, so keep its video stream endpoints as well.
             if (
                 (re.search(r"\.mp4", url_r) and "byte" in url_r)
-                or ("douyinvod.com" in url_r and "media-audio" not in url_r)
+                or "douyinvod.com" in url_r
             ) and url_r not in found_urls:
                 found_urls.append(url_r)
                 print(f"[MP4] {url_r}")
@@ -99,9 +98,49 @@ def extract_video(url: str, output_dir: Path) -> dict:
         # Get page HTML for further analysis
         page_content = page.content()
 
+        page_metadata = page.evaluate(
+            """() => {
+                const text = (selector) => {
+                    const el = document.querySelector(selector);
+                    return el ? (el.textContent || '').trim() : '';
+                };
+                const meta = (selector) => {
+                    const el = document.querySelector(selector);
+                    return el ? (el.content || '').trim() : '';
+                };
+                let jsonLd = {};
+                for (const el of document.querySelectorAll('script[type="application/ld+json"]')) {
+                    try {
+                        const value = JSON.parse(el.textContent || '{}');
+                        if (value && typeof value === 'object') { jsonLd = value; break; }
+                    } catch (_) {}
+                }
+                const creator = jsonLd.author || jsonLd.creator || {};
+                const authorLink = Array.from(document.links).find((el) => {
+                    const value = (el.innerText || el.textContent || '').trim();
+                    return el.href.includes('/user/') && /(^|\\s)作者(\\s|$)/.test(value);
+                });
+                const linkedAuthor = authorLink
+                    ? (authorLink.innerText || authorLink.textContent || '').replace(/(^|\\s)作者(\\s|$)/g, ' ').trim()
+                    : '';
+                return {
+                    title: meta('meta[property="og:title"]') || jsonLd.name || '',
+                    description: meta('meta[property="og:description"]') || jsonLd.description || '',
+                    author: text('[data-e2e="video-author-name"]') ||
+                            text('[data-e2e="user-title"]') ||
+                            text('.account-name') ||
+                            meta('meta[name="author"]') ||
+                            linkedAuthor ||
+                            (typeof creator === 'string' ? creator : (creator.name || '')) || '',
+                };
+            }"""
+        )
+
         # Collect metadata
         metadata = {
-            "title": title,
+            "title": page_metadata.get("title") or title,
+            "author": page_metadata.get("author") or "",
+            "description": page_metadata.get("description") or "",
             "url": current_url,
             "video_urls": found_urls,
             "video_element": video_info,

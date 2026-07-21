@@ -330,6 +330,18 @@ def _write_srt(segments: list[tuple[float, float, str]], srt_path: Path) -> None
 
 # ── Keyframe extraction ─────────────────────────────────────────────────────
 
+MAX_KEYFRAMES = max(1, min(int(os.environ.get("LEARN_MAX_KEYFRAMES", "60")), 300))
+
+
+def _sample_evenly(items: list, limit: int) -> list:
+    """Keep a bounded, timeline-wide sample while preserving first and last items."""
+    if limit <= 0 or len(items) <= limit:
+        return list(items)
+    if limit == 1:
+        return [items[0]]
+    indices = [round(index * (len(items) - 1) / (limit - 1)) for index in range(limit)]
+    return [items[index] for index in indices]
+
 def _extract_keyframes(video_path: Path, out_dir: Path) -> list[tuple[Path, float]]:
     """Detect scenes via scenedetect, extract one JPEG per scene start."""
     from scenedetect import ContentDetector, detect, open_video
@@ -337,6 +349,7 @@ def _extract_keyframes(video_path: Path, out_dir: Path) -> list[tuple[Path, floa
     out_dir.mkdir(parents=True, exist_ok=True)
     open_video(str(video_path))
     scenes = detect(str(video_path), ContentDetector())
+    scenes = _sample_evenly(scenes, MAX_KEYFRAMES)
     results: list[tuple[Path, float]] = []
     for idx, (start, _end) in enumerate(scenes, 1):
         ts = float(start.get_seconds())
@@ -370,6 +383,46 @@ def _write_ocr(items: list[tuple[float, str]], out_path: Path) -> None:
     """Write OCR results as timestamped text."""
     lines = [f"[{int(ts)//60:02d}:{int(ts)%60:04.1f}] {text}" for ts, text in items]
     out_path.write_text("\n".join(lines) + "\n" if lines else "", encoding="utf-8")
+
+
+def extract_visual_evidence(video_path: Path, target_dir: Path) -> dict:
+    """Extract keyframes and OCR for any local media used by a fallback backend."""
+    target_dir = Path(target_dir)
+    payload = {
+        "frames": [], "ocr": [], "ocr_provider": "none", "degraded": [],
+    }
+    if importlib.util.find_spec("scenedetect") is None:
+        payload["degraded"].append("scenedetect missing: keyframes and OCR skipped")
+    else:
+        frames_dir = target_dir / "frames"
+        try:
+            frames = _extract_keyframes(Path(video_path), frames_dir)
+        except Exception as error:
+            payload["degraded"].append(f"keyframe extraction failed: {error}")
+            frames = []
+        payload["frames"] = [
+            {"path": path.relative_to(target_dir).as_posix(), "timestamp": timestamp}
+            for path, timestamp in frames
+        ]
+        if frames:
+            try:
+                ocr_entries, provider, fallback_reason = _ocr_frames(frames)
+                payload["ocr_provider"] = provider
+                payload["ocr"] = [
+                    {"timestamp": timestamp, "text": text}
+                    for timestamp, text in ocr_entries
+                ]
+                _write_ocr(ocr_entries, frames_dir / "ocr.txt")
+                if fallback_reason:
+                    payload["degraded"].append(fallback_reason)
+                if provider == "none":
+                    payload["degraded"].append("OCR provider missing")
+            except Exception as error:
+                payload["degraded"].append(f"OCR failed: {error}")
+    (target_dir / "visual_evidence.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return payload
 
 
 # ── Summary writer (learn-compatible) ────────────────────────────────────────

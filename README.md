@@ -1,4 +1,4 @@
-# 知析 zhixi-learn v5.1.1
+# 知析 zhixi-learn v5.2.0
 
 > **Agent-Native Learning Pipeline.** Shared link or local media → link normalization → subtitle-first extraction or resilient transcription → keyframe OCR → evidence-first Map-Reduce-Verify → hierarchical knowledge card and knowledge base import.
 >
@@ -29,6 +29,7 @@ pip install yt-dlp faster-whisper hearsay requests
 |------|------|
 | 🌐 **网络自适应** | 自动检测 GFW，筛选可用平台 |
 | 🔍 **8 平台支持** | 抖音 · TikTok · B站 · YouTube · 播客 · 微信 · 小红书 · 本地文件 |
+| 👤 **抖音主页批量学习** | 自动枚举 `/aweme/post` 分页、按作品 ID 去重并报告页面计数差异 |
 | 🔍 **中文界面 OCR** | PP-OCRv6（隔离环境）→ 旧 PaddleOCR → Tesseract |
 | 🏗 **证据优先 AI 分析** | 全文分段 Map → Reduce 汇总 → 本地证据 Verify；长内容按分段数量调用模型 |
 | 📑 **层级化输出** | 章节分解 + Mermaid 思维导图 + 3段式总结 |
@@ -64,6 +65,9 @@ python zhixi-learn.py "https://www.bilibili.com/video/BV1GJ411x7h7"
 
 # 批量处理
 python zhixi-learn.py "url1" "url2" "url3"
+
+# 抖音博主主页（自动枚举公开可访问视频）
+python zhixi-learn.py "https://www.douyin.com/user/..."
 
 # 仅提取内容（跳过 AI 分析和导入）
 python zhixi-learn.py "url" --extract-only
@@ -114,7 +118,6 @@ URL → 🌐 Network Detect → 🔍 Platform Detect → 📥 Extract
 ## 🃏 复习闪卡
 ## 🤔 深度思考
 ## 🤖 AI 分类
-## 📝 完整转录
 ```
 
 ---

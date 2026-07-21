@@ -10,7 +10,7 @@
 
 ```json
 {
-  "skill_version": "3.6.0",
+  "skill_version": "5.2.0",
   "last_check": "2026-06-24T15:20:00",
   "env": {
     "ffmpeg": {"found": true, "version": "8.1.1"},

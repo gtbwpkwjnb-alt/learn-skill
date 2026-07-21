@@ -12,9 +12,17 @@ if str(SKILL_ROOT) not in sys.path:
     sys.path.insert(0, str(SKILL_ROOT))
 
 from learn_core.providers.douyin import DouyinProvider  # noqa: E402
+from scripts.extract_douyin import _sample_evenly  # noqa: E402
 
 
 class DouyinProviderTests(unittest.TestCase):
+    def test_keyframe_sampling_is_bounded_and_spans_timeline(self):
+        sampled = _sample_evenly(list(range(303)), 60)
+        self.assertEqual(len(sampled), 60)
+        self.assertEqual(sampled[0], 0)
+        self.assertEqual(sampled[-1], 302)
+        self.assertEqual(len(set(sampled)), 60)
+
     def test_source_and_artifact_manifests_are_task_local(self):
         with tempfile.TemporaryDirectory() as tmp:
             task_dir = Path(tmp) / "task"

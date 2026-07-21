@@ -39,6 +39,8 @@ python scripts/extract_douyin.py "<url>" --frames --out ./learn-output
 - `https://www.douyin.com/video/xxxxx` — Video page
 - `https://www.iesdouyin.com/share/video/xxxxx` — Share link
 - `https://www.douyin.com/user/xxx?modal_id=xxxxx` — User page video
+- `https://www.douyin.com/user/xxx` — User profile; enumerates public `/aweme/post` pages
+- `https://www.iesdouyin.com/share/user/xxx` — User profile share page
 - `https://www.tiktok.com/@user/video/xxxxx` — TikTok
 - `https://vm.tiktok.com/xxxxx/` — TikTok short link
 
@@ -53,6 +55,7 @@ After extraction, in `learn-output/<id>/`:
 
 - Requires network access to Douyin/TikTok servers
 - Private/deleted videos cannot be extracted
+- Profile counts can differ from the public API result; the report preserves the mismatch without guessing why
 - TikTok may be blocked in some regions
 
 ---

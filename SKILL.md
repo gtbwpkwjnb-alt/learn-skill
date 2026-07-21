@@ -1,9 +1,10 @@
 ---
 name: learn
+version: 5.2.0
 description: 学习+分享链接或本地音视频 → 清洗短链与推广参数、提取字幕或转写、关键帧 OCR、证据核验 AI 总结、闪卡与 Obsidian/思源 Markdown 导入。适用于抖音、B站、YouTube、播客及网页学习内容。
 ---
 
-# zhixi-learn v5.1.1
+# zhixi-learn v5.2.0
 
 > **一条链接 → 全增强知识卡片。** AI 分类 + 亮点提取 + 深度思考 + 术语解释 + 评分 + 知识图谱 + 闪卡 + 章节总结 + 多知识库导入。双速自适应，零配置。
 >
@@ -230,7 +231,7 @@ checks = {
 按优先级依次匹配 URL：
 
 ```
-抖音:   (?:v\.douyin\.com|www\.douyin\.com/video|www\.iesdouyin\.com|douyin\.com/user/.*modal_id)
+抖音:   (?:v\.douyin\.com|www\.douyin\.com/video|www\.iesdouyin\.com|douyin\.com/(?:share/)?user/)
 TikTok: (?:tiktok\.com|vm\.tiktok\.com)
 B站:    bilibili\.com/video/
 YouTube: (?:youtube\.com/watch|youtu\.be/)
