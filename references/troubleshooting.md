@@ -35,7 +35,7 @@ where ffmpeg        # Windows
 
 **Symptom**: `⚠ DEEPSEEK_API_KEY not configured`
 
-**Note**: 5.3.0 默认由当前 Codex agent 直接完成分类、闪卡和总结，不需要任何外部 API。只有用户明确要求旧版脚本外部分析时才相关。
+**Note**: 5.4.1 默认由当前 agent 使用当前会话模型直接完成分类、闪卡和总结，不需要任何外部 API。只有用户明确要求旧版脚本外部分析时才相关。
 
 **Solution（仅外部 API 兼容模式）**: 设置 `LEARN_ENABLE_EXTERNAL_AI=1` 后，再按需配置 `.env`：
 ```env
@@ -129,7 +129,7 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 **Handling**:
 1. 确认提取任务目录存在 `transcript.txt`/`transcript.srt`
-2. 让当前 Codex agent 直接读取转写并完成 Map → Reduce → Verify
+2. 让当前 agent 使用当前会话模型直接读取转写并完成 Map → Reduce → Verify
 3. 使用 `scripts/assemble_md.py` 生成按主题和日期命名的最终 Markdown
 4. 只有显式启用外部 API 时，才检查 `.api_call_log.json`
 

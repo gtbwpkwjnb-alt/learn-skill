@@ -4,10 +4,16 @@ All notable changes to the learn skill.
 
 ---
 
+## [5.4.1] - 2026-07-25
+
+### Changed
+- Replaced product-specific agent wording with the generic current agent/current session model contract.
+- Clarified that the skill is model-agnostic and must use the host agent's active model without requiring an external API.
+
 ## [5.4.0] - 2026-07-25
 
 ### Added
-- Current Codex agent as the default semantic analysis layer; external LLM APIs are opt-in only.
+- Host agent's active session model as the default semantic analysis layer; external LLM APIs are opt-in only.
 - Source-first, planner-evidence-publisher, modular analysis, and chapter-level output rules.
 - Structured output fields for entities, tools and reasons, workflow steps, opportunity signals, metrics, actions, and evidence gaps.
 - Topic-and-date Markdown naming and duplicate-date protection during Obsidian import.

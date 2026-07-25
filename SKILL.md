@@ -1,10 +1,10 @@
 ---
 name: learn
-version: 5.4.0
+version: 5.4.1
 description: 学习+分享链接或本地音视频 → 清洗短链与推广参数、提取字幕或转写、关键帧 OCR、证据核验 AI 总结、闪卡与 Obsidian/思源 Markdown 导入。适用于抖音、B站、YouTube、播客及网页学习内容。
 ---
 
-# zhixi-learn v5.4.0
+# zhixi-learn v5.4.1
 
 > **一条链接 → 全增强知识卡片。** AI 分类 + 亮点提取 + 深度思考 + 术语解释 + 评分 + 知识图谱 + 闪卡 + 章节总结 + 多知识库导入。双速自适应，零配置。
 >
@@ -181,7 +181,7 @@ else:
   │   ├─ B站  → `bilibili-cli 字幕时间线 → yt-dlp → ASR 兜底`
   │   ├─ 本地 → `python tools/zhixi-learn.py <local_path> --no-import`
   │   └─ 播客 → `python tools/zhixi-learn.py <url> --no-import`
-  ├─ 第4步：当前 Codex agent 综合分析（全文 Map 分段 → Reduce 汇总 → 原文证据 Verify）
+  ├─ 第4步：当前 agent 综合分析（全文 Map 分段 → Reduce 汇总 → 原文证据 Verify）
   ├─ 第5步：知识图谱（语义关联：tags 交集匹配已有笔记）
   ├─ 第6步：组装增强 Markdown（关键帧截图 + 层级模板）
   ├─ 第7步：导入 Obsidian/思源（Obsidian 优先）
@@ -207,7 +207,7 @@ else:
 
 ## 执行流程
 
-**强制收尾规则：不得在生成 `summary.md`、`transcript.txt` 或 `transcript.srt` 后结束任务。** 这些只是中间产物。提取命令返回后，当前 Codex agent 必须继续读取证据，完成 Map → Reduce → Verify，调用 `scripts/assemble_md.py` 生成按主题和日期命名的最终 Markdown，并在用户要求或配置允许时执行 `kb_router.py` 导入。最终汇报必须包含该命名文件路径；没有最终 Markdown 时只能报告“未完成”，不得称学习完成。
+**强制收尾规则：不得在生成 `summary.md`、`transcript.txt` 或 `transcript.srt` 后结束任务。** 这些只是中间产物。提取命令返回后，当前 agent 必须继续读取证据，完成 Map → Reduce → Verify，调用 `scripts/assemble_md.py` 生成按主题和日期命名的最终 Markdown，并在用户要求或配置允许时执行 `kb_router.py` 导入。最终汇报必须包含该命名文件路径；没有最终 Markdown 时只能报告“未完成”，不得称学习完成。
 
 ### Python 执行入口记忆（Windows）
 
@@ -308,14 +308,14 @@ yt-dlp <url>
 > 2. `metadata.json`（playwright 方式产生的元数据）
 > 3. 从这些来源手动构建 summary.md
 
-### 步骤 4：当前 Codex agent 综合分析（Map → Reduce → Verify）
+### 步骤 4：当前 agent 综合分析（Map → Reduce → Verify）
 
-**默认不调用外部大模型 API。** `zhixi-learn.py` 负责提取、转写和保存证据；完成后，当前 Codex agent 直接读取任务目录中的 `transcript.txt`/`transcript.srt`、`metadata.json` 和关键帧，完成以下分析并写入最终 Markdown：
+**默认不调用外部大模型 API。** `zhixi-learn.py` 负责提取、转写和保存证据；完成后，当前 agent 使用当前会话所用模型直接读取任务目录中的 `transcript.txt`/`transcript.srt`、`metadata.json` 和关键帧，完成以下分析并写入最终 Markdown：
 
 1. Map：按时间段提取原子主张，每条附时间戳证据。
 2. Reduce：去重、合并主题、标注不确定性，不把分享文案或转写错误当成事实。
 3. Verify：逐项回读转写和画面证据；无法核验的内容标记“待核验”。
-4. 使用 `scripts/assemble_md.py` 组装最终 Markdown。文件名必须由当前 Codex agent 根据内容生成，格式为 `<内容主题>-<YYYY-MM-DD>.md`；禁止使用固定的 `final.md` 作为最终交付文件名。
+4. 使用 `scripts/assemble_md.py` 组装最终 Markdown。文件名必须由当前 agent 根据内容生成，格式为 `<内容主题>-<YYYY-MM-DD>.md`；禁止使用固定的 `final.md` 作为最终交付文件名。
 
 **内容完整度门槛（5.4.0）**：视频型学习笔记不得只写摘要、亮点和闪卡。默认必须检查并覆盖：主要人物/主体与背景、产品或事件机制、使用的工具/资源及每项使用原因、验证与增长/执行步骤、商机或问题发现方法、核心方法论、结果数据、可复用行动清单、逐项证据边界和待核验项。视频未提及的字段写“未提及”，不得用常识补齐。
 
@@ -347,7 +347,7 @@ yt-dlp <url>
 
 不要尝试通过 Python 调用当前会话模型，也不要要求用户配置 `DEEPSEEK_API_KEY` 或其他外部模型密钥。只有用户明确要求外部模型时，才设置 `LEARN_ENABLE_EXTERNAL_AI=1`，并报告外部 API、模型和失败情况。
 
-> **Map-Reduce 架构**：由当前 Codex agent 先分段提取，再合并验证。相比单轮输出，大幅降低“丢失中间”和幻觉风险。
+> **Map-Reduce 架构**：由当前 agent 先分段提取，再合并验证。相比单轮输出，大幅降低“丢失中间”和幻觉风险。
 >
 > ⚠️ 完整提示词已外移至 `references/prompts.md`。执行时按以下流程调用：
 >
@@ -445,7 +445,7 @@ save_state(state)
 
 ## 配置
 
-参考 `.env.example`（技能目录下）。无需 `.env` 或外部大模型密钥即可使用；分类/闪卡/总结由当前 Codex agent 在线完成。
+参考 `.env.example`（技能目录下）。无需 `.env` 或外部大模型密钥即可使用；分类/闪卡/总结由当前 agent 使用当前会话模型完成。
 
 ### 推荐环境
 

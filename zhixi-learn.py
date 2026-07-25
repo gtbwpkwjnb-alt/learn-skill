@@ -806,11 +806,11 @@ def generate_structured_analysis(title: str, transcript: str) -> StructuredAnaly
     """Analyze all transcript chunks, then verify every rendered evidence item."""
     result = StructuredAnalysis()
 
-    # Semantic analysis belongs to the parent Codex agent. Keep extraction
+    # Semantic analysis belongs to the parent agent. Keep extraction
     # API-free by default; legacy external analysis requires explicit opt-in.
     if os.environ.get("LEARN_ENABLE_EXTERNAL_AI", "").lower() not in {"1", "true", "yes"}:
         return _fallback_structured_analysis(
-            transcript, "当前由 Codex agent 直接分析；未调用外部大模型 API"
+            transcript, "当前由 agent 会话模型直接分析；未调用外部大模型 API"
         )
     
     if not DEEPSEEK_KEY:

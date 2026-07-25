@@ -1,4 +1,4 @@
-# 知析 zhixi-learn v5.4.0
+# 知析 zhixi-learn v5.4.1
 
 > **Agent-Native Learning Pipeline.** Shared link or local media → link normalization → subtitle-first extraction or resilient transcription → keyframe OCR → evidence-first Map-Reduce-Verify → hierarchical knowledge card and knowledge base import.
 >
@@ -31,7 +31,7 @@ pip install yt-dlp faster-whisper hearsay requests
 | 🔍 **8 平台支持** | 抖音 · TikTok · B站 · YouTube · 播客 · 微信 · 小红书 · 本地文件 |
 | 👤 **抖音主页批量学习** | 自动枚举 `/aweme/post` 分页、按作品 ID 去重并报告页面计数差异 |
 | 🔍 **中文界面 OCR** | PP-OCRv6（隔离环境）→ 旧 PaddleOCR → Tesseract |
-| 🏗 **当前 Agent 证据分析** | 全文分段 Map → Reduce 汇总 → 本地证据 Verify；默认使用当前 Codex agent，不依赖外部模型 API |
+| 🏗 **当前 Agent 证据分析** | 全文分段 Map → Reduce 汇总 → 本地证据 Verify；技能激活后使用当前 agent 的会话模型，不依赖外部模型 API |
 | 📑 **层级化输出** | 章节分解 + Mermaid 思维导图 + 3段式总结 |
 | 📤 **双知识库导入** | Obsidian（默认）+ 思源回退 + 本地 Markdown |
 | 📦 **可恢复任务** | SQLite 任务账本 + 工件清单 + 断点续传；成功导入后默认清理本地工件 |
@@ -89,7 +89,7 @@ python zhixi-learn.py "https://b23.tv/xxxxx?spm_id_from=333" --dry-run --no-reso
 ```
 URL → 🌐 Network Detect → 🔍 Platform Detect → 📥 Extract
      ↓
-🧹 Text Processing → 🤖 Current Codex Agent Analysis (no external API by default)
+🧹 Text Processing → 🤖 Current Agent Analysis (current session model; no external API by default)
      ↓                    ├─ Category + Tags
      ↓                    ├─ 3-paragraph Summary (TL;DR→Detail→Implications)
      ↓                    ├─ Chapters (title + timestamp + points)
@@ -149,7 +149,7 @@ learn-skill/
 
 | 变量 | 必需 | 说明 |
 |------|:----:|------|
-| `DEEPSEEK_API_KEY` | ❌ | 仅外部 API 兼容模式使用；默认由当前 Codex agent 分析 |
+| `DEEPSEEK_API_KEY` | ❌ | 仅外部 API 兼容模式使用；默认由当前 agent 的会话模型分析 |
 | `SIYUAN_TOKEN` | ❌ | 思源 API token（导入思源时必需） |
 | `BILI_COOKIE` | ❌ | B站 Cookie（获取高质量字幕） |
 | `OBSIDIAN_VAULT` | ❌ | Obsidian 库路径 |
@@ -160,7 +160,7 @@ learn-skill/
 
 | 改进 | v3 (learn) | v4 (zhixi-learn) |
 |------|:----------:|:----------------:|
-| AI 分析入口 | 外部 API 串行调用 | **当前 Codex agent（外部 API 仅显式兼容）** |
+| AI 分析入口 | 外部 API 串行调用 | **当前 agent 会话模型（外部 API 仅显式兼容）** |
 | 章节分解 | ❌ | ✅ 带时间戳+要点 |
 | 思维导图 | ❌ | ✅ Mermaid |
 | 层级化总结 | ❌ | ✅ 3段式 |
