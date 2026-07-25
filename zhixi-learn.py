@@ -805,6 +805,13 @@ def _reduce_analysis_facts(title: str, facts: List[Dict]) -> Dict:
 def generate_structured_analysis(title: str, transcript: str) -> StructuredAnalysis:
     """Analyze all transcript chunks, then verify every rendered evidence item."""
     result = StructuredAnalysis()
+
+    # Semantic analysis belongs to the parent Codex agent. Keep extraction
+    # API-free by default; legacy external analysis requires explicit opt-in.
+    if os.environ.get("LEARN_ENABLE_EXTERNAL_AI", "").lower() not in {"1", "true", "yes"}:
+        return _fallback_structured_analysis(
+            transcript, "当前由 Codex agent 直接分析；未调用外部大模型 API"
+        )
     
     if not DEEPSEEK_KEY:
         print("  ⚠ DEEPSEEK_API_KEY 未配置，跳过 AI 分析")

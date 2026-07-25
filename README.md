@@ -1,4 +1,4 @@
-# 知析 zhixi-learn v5.2.0
+# 知析 zhixi-learn v5.4.0
 
 > **Agent-Native Learning Pipeline.** Shared link or local media → link normalization → subtitle-first extraction or resilient transcription → keyframe OCR → evidence-first Map-Reduce-Verify → hierarchical knowledge card and knowledge base import.
 >
@@ -31,7 +31,7 @@ pip install yt-dlp faster-whisper hearsay requests
 | 🔍 **8 平台支持** | 抖音 · TikTok · B站 · YouTube · 播客 · 微信 · 小红书 · 本地文件 |
 | 👤 **抖音主页批量学习** | 自动枚举 `/aweme/post` 分页、按作品 ID 去重并报告页面计数差异 |
 | 🔍 **中文界面 OCR** | PP-OCRv6（隔离环境）→ 旧 PaddleOCR → Tesseract |
-| 🏗 **证据优先 AI 分析** | 全文分段 Map → Reduce 汇总 → 本地证据 Verify；长内容按分段数量调用模型 |
+| 🏗 **当前 Agent 证据分析** | 全文分段 Map → Reduce 汇总 → 本地证据 Verify；默认使用当前 Codex agent，不依赖外部模型 API |
 | 📑 **层级化输出** | 章节分解 + Mermaid 思维导图 + 3段式总结 |
 | 📤 **双知识库导入** | Obsidian（默认）+ 思源回退 + 本地 Markdown |
 | 📦 **可恢复任务** | SQLite 任务账本 + 工件清单 + 断点续传；成功导入后默认清理本地工件 |
@@ -42,7 +42,7 @@ pip install yt-dlp faster-whisper hearsay requests
 ### 文件保存规则
 
 - 处理中工件：`learn-output/_tasks/<task_id>/`，用于断点续传、转录、关键帧与分析中间结果。
-- 导入 Obsidian 后的笔记：`<Vault>/learn/<YYYY>/<YYYY-MM>/<platform>/<title>--<task_id>/<title>.md`，仅保留 Markdown 和引用的关键帧/资产。
+- 导入 Obsidian 后的笔记：`<Vault>/learn/<主题>-<YYYY-MM-DD>.md`，仅保留 Markdown 和引用的关键帧/资产。
 - 导入成功后默认清理该任务的本地工件；SQLite 账本仍保留来源链接和最终笔记路径。需要保留工件时加 `--keep-local`。
 
 ---
@@ -89,7 +89,7 @@ python zhixi-learn.py "https://b23.tv/xxxxx?spm_id_from=333" --dry-run --no-reso
 ```
 URL → 🌐 Network Detect → 🔍 Platform Detect → 📥 Extract
      ↓
-🧹 Text Processing → 🤖 Unified AI Analysis (1 API call)
+🧹 Text Processing → 🤖 Current Codex Agent Analysis (no external API by default)
      ↓                    ├─ Category + Tags
      ↓                    ├─ 3-paragraph Summary (TL;DR→Detail→Implications)
      ↓                    ├─ Chapters (title + timestamp + points)
@@ -149,7 +149,7 @@ learn-skill/
 
 | 变量 | 必需 | 说明 |
 |------|:----:|------|
-| `DEEPSEEK_API_KEY` | ✅ | DeepSeek API 密钥（AI 分析必需） |
+| `DEEPSEEK_API_KEY` | ❌ | 仅外部 API 兼容模式使用；默认由当前 Codex agent 分析 |
 | `SIYUAN_TOKEN` | ❌ | 思源 API token（导入思源时必需） |
 | `BILI_COOKIE` | ❌ | B站 Cookie（获取高质量字幕） |
 | `OBSIDIAN_VAULT` | ❌ | Obsidian 库路径 |
@@ -160,7 +160,7 @@ learn-skill/
 
 | 改进 | v3 (learn) | v4 (zhixi-learn) |
 |------|:----------:|:----------------:|
-| API 调用次数 | 6 次串行 | **1 次统一** |
+| AI 分析入口 | 外部 API 串行调用 | **当前 Codex agent（外部 API 仅显式兼容）** |
 | 章节分解 | ❌ | ✅ 带时间戳+要点 |
 | 思维导图 | ❌ | ✅ Mermaid |
 | 层级化总结 | ❌ | ✅ 3段式 |

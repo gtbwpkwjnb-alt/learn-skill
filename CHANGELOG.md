@@ -4,6 +4,23 @@ All notable changes to the learn skill.
 
 ---
 
+## [5.4.0] - 2026-07-25
+
+### Added
+- Current Codex agent as the default semantic analysis layer; external LLM APIs are opt-in only.
+- Source-first, planner-evidence-publisher, modular analysis, and chapter-level output rules.
+- Structured output fields for entities, tools and reasons, workflow steps, opportunity signals, metrics, actions, and evidence gaps.
+- Topic-and-date Markdown naming and duplicate-date protection during Obsidian import.
+- Python 3.14 preferred runtime memory with `py -3.14` fallback.
+
+### Changed
+- Video learning notes must cover people, mechanisms, tools, reasons, workflow, methodology, metrics, reuse actions, and evidence boundaries.
+- README, prompts, output format, and troubleshooting now match the agent-native workflow.
+
+### Fixed
+- Prevented default Python 3.11 from being treated as the learn runtime when dependencies are installed under Python 3.14.
+- Prevented final notes from stopping at transcript/summary artifacts without a completed Markdown output.
+
 ## [5.2.0] - 2026-07-21
 
 ### Fixed

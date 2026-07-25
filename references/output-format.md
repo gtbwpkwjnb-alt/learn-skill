@@ -9,8 +9,8 @@
 `learn-output/<id>/` 目录内容：
 
 ```
-├── summary.md       ← 元数据+转录+关键帧引用+OCR文本（供AI分析，不入final.md）
-├── transcript.txt   ← 原始转录（AI内部使用，final.md 仅输出提炼后的知识点）
+├── summary.md       ← 元数据+转录+关键帧引用+OCR文本（供AI分析，不入最终主题-日期 Markdown）
+├── transcript.txt   ← 原始转录（AI内部使用，最终主题-日期 Markdown 仅输出提炼后的知识点）
 ├── video.mp4
 ├── audio.wav
 ├── audio_source.mp4 ← 抖音等来源的分离音频流（如有）
@@ -23,13 +23,13 @@
 ```
 
 **注意**：
-- 原始转录仅用于 AI 分析，不进入 final.md 最终输出
-- 若以降级模式运行（缺 tesseract/scenedetect），在 final.md 顶部标注 🟡 Degraded Mode
-- 若用了 playwright 兜底（绕过 yt-dlp），在 final.md 标注提取方式
+- 原始转录仅用于 AI 分析，不进入最终主题-日期 Markdown
+- 若以降级模式运行（缺 tesseract/scenedetect），在最终文件顶部标注 🟡 Degraded Mode
+- 若用了 playwright 兜底（绕过 yt-dlp），在最终文件标注提取方式
 
 ---
 
-## Markdown 模板（final.md）
+## Markdown 模板（主题-日期.md）
 
 ```markdown
 ---
@@ -59,6 +59,48 @@ degraded_mode: "{none | no_ocr | no_frames | no_ocr_frames}"
 - **Method / 方式**: {yt-dlp / playwright / hybrid}
 - **Status / 状态**: {full / degraded}
 - **Missing / 缺失**: {tesseract, scenedetect, ...}
+
+## 一句话总览
+{one_sentence_summary}
+
+## 核心要点
+1. {main_point_1}
+2. {main_point_2}
+...
+
+## 主要人物/主体与背景
+| 主体 | 身份/角色 | 背景 | 证据 |
+|---|---|---|---|
+| {entity} | {role} | {context} | [{time}] {quote} |
+
+## 产品、事件或概念机制
+{mechanism}
+
+## 工具/资源与使用原因
+| 工具/资源 | 用途 | 为什么使用 | 证据 |
+|---|---|---|---|
+| {tool} | {purpose} | {why} | [{time}] {quote} |
+
+## 过程与章节
+### [{MM:SS}] {chapter_title}
+**做了什么**：{step}
+**为什么此时做**：{why}
+**结果**：{result}
+**证据**：{quote}
+
+## 方法论与商机/问题发现路径
+| 信号/原则 | 观察 | 可推断 | 不能推断 | 证据 |
+|---|---|---|---|---|
+| {signal} | {observation} | {inference} | {boundary} | {quote} |
+
+## 结果数据与含义
+| 指标 | 数值 | 内容中的含义 | 状态 | 证据 |
+|---|---|---|---|---|
+| {metric} | {value} | {meaning} | verified/source_claim/unavailable | {quote} |
+
+## 可复用行动清单
+1. {action_with_precondition}
+2. {action_with_precondition}
 
 ## 💡 AI Summary / AI 总结
 {summary}
@@ -101,6 +143,13 @@ graph LR
 
 ## 🃏 Flashcards / 闪卡
 ...
+
+## 来源、证据矩阵与待核验项
+- **来源**：{source_url}
+- **原始证据**：`transcript.txt`、`transcript.srt`、关键帧/OCR
+- **已支持主张**：{verified_claims}
+- **来源声称但未独立核验**：{source_claims}
+- **待核验/缺口**：{evidence_gaps}
 ```
 
 ---
@@ -122,5 +171,5 @@ python scripts/assemble_md.py \
   --related-notes '<相关笔记JSON>' \
   --flashcards '<闪卡JSON>' \
   --degraded-mode '<降级标注: 无OCR/无关键帧>' \
-  --out "learn-output/<slug>/final.md"
+  --out "learn-output/<slug>/<内容主题>-<YYYY-MM-DD>.md"
 ```

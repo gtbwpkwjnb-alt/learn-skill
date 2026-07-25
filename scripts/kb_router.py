@@ -178,7 +178,11 @@ def _import_obsidian(md_content: str, title: str) -> Dict[str, Any]:
         return {"target": "obsidian", "success": False, "error": "Obsidian vault not found"}
     learn_dir = vault / "learn"
     learn_dir.mkdir(parents=True, exist_ok=True)
-    slug = title.replace(" ", "_").replace("/", "_")[:64] or datetime.now().strftime("%Y%m%d_%H%M%S")
+    slug = title.replace(" ", "_").replace("/", "_")[:64] or "学习笔记"
+    # Preserve an existing AI-generated date suffix; otherwise add today's date.
+    import re
+    if not re.search(r"-\d{4}-\d{2}-\d{2}$", slug):
+        slug = f"{slug}-{datetime.now().strftime('%Y-%m-%d')}"
     out_path = learn_dir / f"{slug}.md"
     out_path.write_text(md_content, encoding="utf-8")
     return {"target": "obsidian", "success": True, "path": str(out_path), "error": ""}

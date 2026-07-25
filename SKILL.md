@@ -1,10 +1,10 @@
 ---
 name: learn
-version: 5.2.0
+version: 5.4.0
 description: 学习+分享链接或本地音视频 → 清洗短链与推广参数、提取字幕或转写、关键帧 OCR、证据核验 AI 总结、闪卡与 Obsidian/思源 Markdown 导入。适用于抖音、B站、YouTube、播客及网页学习内容。
 ---
 
-# zhixi-learn v5.2.0
+# zhixi-learn v5.4.0
 
 > **一条链接 → 全增强知识卡片。** AI 分类 + 亮点提取 + 深度思考 + 术语解释 + 评分 + 知识图谱 + 闪卡 + 章节总结 + 多知识库导入。双速自适应，零配置。
 >
@@ -181,7 +181,7 @@ else:
   │   ├─ B站  → `bilibili-cli 字幕时间线 → yt-dlp → ASR 兜底`
   │   ├─ 本地 → `python tools/zhixi-learn.py <local_path> --no-import`
   │   └─ 播客 → `python tools/zhixi-learn.py <url> --no-import`
-  ├─ 第4步：AI 综合分析（全文 Map 分段 → Reduce 汇总 → 原文证据 Verify）
+  ├─ 第4步：当前 Codex agent 综合分析（全文 Map 分段 → Reduce 汇总 → 原文证据 Verify）
   ├─ 第5步：知识图谱（语义关联：tags 交集匹配已有笔记）
   ├─ 第6步：组装增强 Markdown（关键帧截图 + 层级模板）
   ├─ 第7步：导入 Obsidian/思源（Obsidian 优先）
@@ -206,6 +206,24 @@ else:
 ---
 
 ## 执行流程
+
+**强制收尾规则：不得在生成 `summary.md`、`transcript.txt` 或 `transcript.srt` 后结束任务。** 这些只是中间产物。提取命令返回后，当前 Codex agent 必须继续读取证据，完成 Map → Reduce → Verify，调用 `scripts/assemble_md.py` 生成按主题和日期命名的最终 Markdown，并在用户要求或配置允许时执行 `kb_router.py` 导入。最终汇报必须包含该命名文件路径；没有最终 Markdown 时只能报告“未完成”，不得称学习完成。
+
+### Python 执行入口记忆（Windows）
+
+运行任何 `learn` Python 脚本前，先读取 `$LEARN_OUTPUT/.skill_state.json`（默认 `C:\Users\Administrator\.agents\skills\learn-output\.skill_state.json`）中的 `env.python.path`。按以下顺序选择解释器：
+
+1. `env.python.path` 存在且可执行时，直接使用该绝对路径；当前已验证路径为 `C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe`。
+2. 路径失效时使用 `py -3.14`，并重新运行环境自检更新状态。
+3. 只有 Python 3.14 不可用时才回退到默认 `python`，并在汇报中明确标记为降级，不得把 3.11 的包缺失误报为环境缺失。
+
+示例：
+
+```powershell
+& 'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe' C:\Users\Administrator\.agents\skills\learn\zhixi-learn.py <URL> --no-import
+```
+
+每次成功运行后，将实际使用的解释器、版本、平台提取方法和结果写回 `.skill_state.json`；下次优先复用最近一次成功路径，不以当前 shell 的 `python` 命令作为唯一依据。
 
 ### 第0步：全环境综合自检
 
@@ -277,22 +295,59 @@ yt-dlp <url>
 - `extraction.log` → 记录每一步执行结果、耗时、降级原因，用于自检自进化分析
 - `audio_source.mp4` → 抖音等平台单独下载的音频流
 
-> **输出原则**：final.md 仅包含 AI 提炼后的知识点（摘要/亮点/思考/术语/评分/图谱/闪卡/章节总结），**不含原始全文转录**，以控制输出体积和 API 成本。
+> **输出原则**：最终主题-日期 Markdown 仅包含 AI 提炼后的知识点（摘要/亮点/思考/术语/评分/图谱/闪卡/章节总结），**不含原始全文转录**，以控制输出体积和 API 成本。
 
 ### 步骤 3：读取提取结果
 
 从 `summary.md` 解析：`title`、`platform`、`author`、`duration`。如有封面图 URL 一并提取。
 
-> 注意：原始转录仅用于 AI 分析，不进入 final.md 最终输出。
+> 注意：原始转录仅用于 AI 分析，不进入最终主题-日期 Markdown。
 >
 > **错误恢复**：如果 summary.md 不存在或格式错误，检查：
 > 1. `transcript.txt` 是否存在（至少要有转录）
 > 2. `metadata.json`（playwright 方式产生的元数据）
 > 3. 从这些来源手动构建 summary.md
 
-### 步骤 4：AI 综合分析（Map → Reduce → Verify）
+### 步骤 4：当前 Codex agent 综合分析（Map → Reduce → Verify）
 
-> **Map-Reduce 架构**：先分段提取 → 再合并验证。相比单轮输出，大幅降低"丢失中间"和幻觉风险。
+**默认不调用外部大模型 API。** `zhixi-learn.py` 负责提取、转写和保存证据；完成后，当前 Codex agent 直接读取任务目录中的 `transcript.txt`/`transcript.srt`、`metadata.json` 和关键帧，完成以下分析并写入最终 Markdown：
+
+1. Map：按时间段提取原子主张，每条附时间戳证据。
+2. Reduce：去重、合并主题、标注不确定性，不把分享文案或转写错误当成事实。
+3. Verify：逐项回读转写和画面证据；无法核验的内容标记“待核验”。
+4. 使用 `scripts/assemble_md.py` 组装最终 Markdown。文件名必须由当前 Codex agent 根据内容生成，格式为 `<内容主题>-<YYYY-MM-DD>.md`；禁止使用固定的 `final.md` 作为最终交付文件名。
+
+**内容完整度门槛（5.4.0）**：视频型学习笔记不得只写摘要、亮点和闪卡。默认必须检查并覆盖：主要人物/主体与背景、产品或事件机制、使用的工具/资源及每项使用原因、验证与增长/执行步骤、商机或问题发现方法、核心方法论、结果数据、可复用行动清单、逐项证据边界和待核验项。视频未提及的字段写“未提及”，不得用常识补齐。
+
+### 研究吸收后的输出架构（5.4.0）
+
+本版吸收公开项目中可迁移的结构，而不是复制其模型或 API：
+
+- **Source-first（claude-obsidian）**：原始转写/截图是不可改的证据层；最终笔记是可重写的综合层，必须保留来源、原句、时间戳和证据边界。
+- **Capture → Organize → Reuse（NoteGen）**：先完整捕获，再按内容类型组织，最后生成可检索、可复用的 Markdown；不得把转写直接冒充总结。
+- **Planner → Evidence → Publisher（GPT Researcher）**：先列出需要回答的子问题，再逐段取证，最后发布报告；视频总结至少要回答“谁、做了什么、怎么做、为何这样做、结果如何、哪些待核验”。
+- **模块化分析（Fabric）**：将人物、机制、工具、流程、方法论、结果、行动建议作为独立分析模块，缺失项写“原文未提及”，避免一个摘要吞掉关键内容。
+- **分块与章节（TextDistiller）**：按时间或逻辑章节总结，每章写清论点、证据、作用和与全片的关系。
+
+最终 Markdown 的固定顺序为：
+
+1. 一句话总览
+2. 核心要点（5-10 条）
+3. 主要人物/主体与背景
+4. 产品、事件或概念机制
+5. 工具/资源清单（工具、用途、使用原因、证据）
+6. 按时间的过程/章节
+7. 方法论与商机/问题发现路径
+8. 结果数据与商业/实践含义
+9. 可复用行动清单
+10. 术语、闪卡和深度问题
+11. 来源、证据矩阵、冲突与待核验项
+
+**完整度验收**：若视频明确涉及人物、工具、步骤、原因、方法论或数据，而最终文件缺少对应章节，任务状态只能为“已提取未总结”，不得导入或报告完成。
+
+不要尝试通过 Python 调用当前会话模型，也不要要求用户配置 `DEEPSEEK_API_KEY` 或其他外部模型密钥。只有用户明确要求外部模型时，才设置 `LEARN_ENABLE_EXTERNAL_AI=1`，并报告外部 API、模型和失败情况。
+
+> **Map-Reduce 架构**：由当前 Codex agent 先分段提取，再合并验证。相比单轮输出，大幅降低“丢失中间”和幻觉风险。
 >
 > ⚠️ 完整提示词已外移至 `references/prompts.md`。执行时按以下流程调用：
 >
@@ -304,12 +359,12 @@ yt-dlp <url>
 | 用户输入 | 效果 |
 |---------|------|
 | 含"简单点" | 章节缩至 30-80 字，类比增多，术语减少 |
-| 含"详细点" | 章节扩至 100-150 字，highlights 增至 8-10 条 |
+| 含"详细点" | 章节扩至 100-150 字，核心要点增至 8-10 条，并完整展开工具、步骤和证据 |
 | 默认 | 平衡模式 |
 
 ### 步骤 5：知识图谱（语义关联）
 
-> 从当前内容中提取 3-5 个**核心概念词**（如"Transformer""Self-Attention"），然后扫描 `learn-output/` 下历史条目的 `tags` 和 `final.md` 标题，匹配规则：
+> 从当前内容中提取 3-5 个**核心概念词**（如"Transformer""Self-Attention"），然后扫描 `learn-output/` 下历史条目的 `tags` 和主题-日期 Markdown 标题，匹配规则：
 >
 > - 核心概念词 ∩ 历史条目 tags 有交集 → 关联
 > - 核心概念词 出现在历史条目标题中 → 关联
@@ -327,7 +382,7 @@ python scripts/assemble_md.py \
   --summary "<AI总结文本>" \
   --highlights '<亮点JSON>' \
   --chapters '<章节JSON>' \
-  --out "learn-output/<slug>/final.md"
+  --out "learn-output/<slug>/<内容主题>-<YYYY-MM-DD>.md"
 ```
 
 > 完整组装命令参数和 Markdown 模板见 [references/output-format.md](references/output-format.md)
@@ -335,7 +390,7 @@ python scripts/assemble_md.py \
 ### 第7步：导入知识库
 
 ```bash
-python scripts/kb_router.py --file "learn-output/<slug>/final.md"
+python scripts/kb_router.py --file "learn-output/<slug>/<内容主题>-<YYYY-MM-DD>.md"
 ```
 
 默认导入 Obsidian（仅复制 Markdown 与关键帧/资产，保持相对链接；不复制 HTML、转录、元数据和媒体）；未配置 Obsidian 时回退思源，再保留本地任务工件。Obsidian 笔记保存为 `<Vault>/learn/<YYYY>/<YYYY-MM>/<platform>/<title>--<task_id>/<title>.md`；成功导入后默认清理 `learn-output/_tasks/<task_id>/`，传入 `--keep-local` 可保留该任务工件。
@@ -367,6 +422,8 @@ state.last_check = datetime.now().isoformat()
 save_state(state)
 ```
 
+5.4.0 保留并扩展 `execution.preferred_python`、`execution.fallback` 和 `execution.reason`，用于固定 Python 3.14 优先级并记录选择依据。
+
 ### 第9步：汇报结果
 
 ```
@@ -388,7 +445,7 @@ save_state(state)
 
 ## 配置
 
-参考 `.env.example`（技能目录下）。无需 `.env` 即可作为 AI 技能使用（分类/闪卡/总结由模型在线完成）。
+参考 `.env.example`（技能目录下）。无需 `.env` 或外部大模型密钥即可使用；分类/闪卡/总结由当前 Codex agent 在线完成。
 
 ### 推荐环境
 

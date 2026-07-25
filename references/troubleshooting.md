@@ -31,13 +31,13 @@ where ffmpeg        # Windows
 # Linux:   sudo apt install ffmpeg
 ```
 
-### DeepSeek API key not configured
+### 外部大模型 API 未配置
 
 **Symptom**: `⚠ DEEPSEEK_API_KEY not configured`
 
-**Note**: Classification, flashcards and summary are done by the AI model inline — no API key needed for normal use. Only relevant if running scripts standalone.
+**Note**: 5.3.0 默认由当前 Codex agent 直接完成分类、闪卡和总结，不需要任何外部 API。只有用户明确要求旧版脚本外部分析时才相关。
 
-**Solution**: Add to `.env`:
+**Solution（仅外部 API 兼容模式）**: 设置 `LEARN_ENABLE_EXTERNAL_AI=1` 后，再按需配置 `.env`：
 ```env
 DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 ```
@@ -125,13 +125,13 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 **Symptom**: `⚠ 亮点生成失败` / `⚠ 深度思考生成失败` / `⚠ 术语生成失败`
 
-**Cause**: API call failure (timeout, rate limit, or parsing error)
+**Cause**: 当前 agent 未完成分析，或用户显式启用外部 API 后发生请求失败
 
 **Handling**:
-1. Check network connection and API key (`DEEPSEEK_API_KEY`)
-2. Retry — the script auto-retries up to 3 times with exponential backoff
-3. These are optional features — the document is still generated without them
-4. If consistently failing, check `.api_call_log.json` in `learn-output/` for details
+1. 确认提取任务目录存在 `transcript.txt`/`transcript.srt`
+2. 让当前 Codex agent 直接读取转写并完成 Map → Reduce → Verify
+3. 使用 `scripts/assemble_md.py` 生成按主题和日期命名的最终 Markdown
+4. 只有显式启用外部 API 时，才检查 `.api_call_log.json`
 
 ### API rate limit reached
 

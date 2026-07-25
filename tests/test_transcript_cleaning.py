@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -60,7 +61,9 @@ class TranscriptCleaningTests(unittest.TestCase):
         original_call = module._call_deepseek
         original_record = module._record_api_call
         original_budget = module._check_analysis_api_budget
+        original_external = os.environ.get("LEARN_ENABLE_EXTERNAL_AI")
         module.DEEPSEEK_KEY = "test-key"
+        os.environ["LEARN_ENABLE_EXTERNAL_AI"] = "1"
 
         def fake_call(prompt, **kwargs):
             if kwargs["call_type"] == "analysis_map":
@@ -77,6 +80,10 @@ class TranscriptCleaningTests(unittest.TestCase):
             module._call_deepseek = original_call
             module._record_api_call = original_record
             module._check_analysis_api_budget = original_budget
+            if original_external is None:
+                os.environ.pop("LEARN_ENABLE_EXTERNAL_AI", None)
+            else:
+                os.environ["LEARN_ENABLE_EXTERNAL_AI"] = original_external
 
         self.assertEqual([item["text"] for item in result.highlights], ["正确"])
         self.assertEqual(result.verification["rejected"]["highlights"], 1)

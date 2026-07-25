@@ -1,4 +1,4 @@
-# AI 分析提示词
+# AI 分析提示词 v5.4.0
 
 > zhixi-learn AI 综合分析的完整提示词（Map-Reduce-Verify 三段式）。参见 SKILL.md「步骤 4」。
 
@@ -16,6 +16,8 @@
 > - `timestamp`: 该句在视频中的时间戳（如 `[MM:SS]`）
 > - `confidence`: 置信度 (`"high"` = 原文明确陈述 / `"medium"` = 原文直接隐含 / `"low"` = 推测但合理)
 > - `topic`: 所属主题标签（如 `"架构"`、`"概念"`、`"案例"`）
+> - `entity_type`: `person` / `product` / `organization` / `tool` / `concept` / `metric` / `unknown`
+> - `role`: 实体在内容中的角色或用途；工具必须说明解决的问题
 >
 > **严禁**：
 > - ❌ 合并多个事实到一条 `claim`
@@ -48,7 +50,33 @@
 {
   "category": "主题分类（具体，如'机器学习'非'科技'）",
   "tags": ["标签1", "标签2", "标签3"],
+  "one_sentence_summary": "一句话说明内容主体、核心动作和结果，不超过 40 字",
+  "main_points": ["5-10 条核心事实；每条包含主体、动作、原因或结果"],
+  "takeaways": ["3-5 条可迁移结论；必须区分原文事实与推导"],
   "summary": "3-5句精华摘要，每句覆盖一个核心论点，有细节有证据",
+
+  "entities": [
+    {"name": "主体或工具名称", "type": "person|product|tool|organization|concept|metric", "role": "在内容中的作用", "evidence": "原文证据"}
+  ],
+
+  "tools": [
+    {"name": "工具名", "purpose": "用于什么", "why": "为什么选择/解决什么约束", "evidence": "原文证据"}
+  ],
+
+  "workflow_steps": [
+    {"order": 1, "time": "MM:SS", "step": "做了什么", "why": "为什么这一步在此时做", "result": "得到什么", "evidence": "原文证据"}
+  ],
+
+  "opportunity_method": [
+    {"signal": "需求/商机信号", "observation": "观察到什么", "inference_boundary": "能推断什么、不能推断什么", "evidence": "原文证据"}
+  ],
+
+  "metrics": [
+    {"name": "指标", "value": "数值", "meaning": "内容赋予的含义", "verification": "verified|source_claim|unavailable", "evidence": "原文证据"}
+  ],
+
+  "action_checklist": ["将内容转化为 3-7 条可执行动作；每条说明前置条件或限制"],
+  "evidence_gaps": ["未提供的来源、人物身份、工具名、数据或关键上下文"],
 
   "highlights": [
     {"time": "MM:SS", "description": "核心要点 + 简短机制说明（25-50字）",
@@ -92,8 +120,10 @@
 
 > 验证以下 AI 提取结果是否准确。对每条 `highlights`、`glossary` 条目逐一检查：
 >
-> 1. **原文支持**：`evidence` 是否在转录中找到？✅/❌
+> 1. **原文支持**：`evidence` 是否在转录或关键帧中找到？✅/❌
 > 2. **正确性**：`claim` / `definition` 是否与原文一致？✅/❌
-> 3. **完整性**：有无明显遗漏的核心观点？✅/❌
+> 3. **完整性**：人物、工具、步骤、原因、方法论、指标是否覆盖？✅/❌
+> 4. **边界**：是否将 `source_claim` 错写成独立核验事实，或把推导伪装成原文？✅/❌
+> 5. **可用性**：是否能从章节、行动清单和实体名称中复用这份笔记？✅/❌
 >
 > 任一字段标记 ❌ → 从最终输出移除，并在任务验证记录中计数。不要为了填满版面而保留无来源内容。
