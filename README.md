@@ -35,7 +35,7 @@ pip install yt-dlp faster-whisper hearsay requests
 | 📑 **层级化输出** | 章节分解 + Mermaid 思维导图 + 3段式总结 |
 | 📤 **双知识库导入** | Obsidian（默认）+ 思源回退 + 本地 Markdown |
 | 📦 **可恢复任务** | SQLite 任务账本 + 工件清单 + 断点续传；成功导入后默认清理本地工件 |
-| 🔒 **安全防护** | API 限流 + 费用追踪 + 批量确认 + 连续失败跳过 |
+| 🔒 **安全边界** | 主脚本只做本地提取与证据保存，不读取或调用外部模型 API |
 
 ---
 
@@ -149,7 +149,6 @@ learn-skill/
 
 | 变量 | 必需 | 说明 |
 |------|:----:|------|
-| `DEEPSEEK_API_KEY` | ❌ | 仅外部 API 兼容模式使用；默认由当前 agent 的会话模型分析 |
 | `SIYUAN_TOKEN` | ❌ | 思源 API token（导入思源时必需） |
 | `BILI_COOKIE` | ❌ | B站 Cookie（获取高质量字幕） |
 | `OBSIDIAN_VAULT` | ❌ | Obsidian 库路径 |
@@ -160,7 +159,7 @@ learn-skill/
 
 | 改进 | v3 (learn) | v4 (zhixi-learn) |
 |------|:----------:|:----------------:|
-| AI 分析入口 | 外部 API 串行调用 | **当前 agent 会话模型（外部 API 仅显式兼容）** |
+| AI 分析入口 | 外部 API 串行调用 | **当前 agent 会话模型（主脚本不调用外部模型）** |
 | 章节分解 | ❌ | ✅ 带时间戳+要点 |
 | 思维导图 | ❌ | ✅ Mermaid |
 | 层级化总结 | ❌ | ✅ 3段式 |

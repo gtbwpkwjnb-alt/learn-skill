@@ -4,6 +4,18 @@ All notable changes to the learn skill.
 
 ---
 
+## [5.5.0] - 2026-07-25
+
+### Breaking
+- Removed the external model API integration, credentials, endpoints, retries, budgets, and call logs.
+- Removed legacy standalone classification and flashcard API scripts.
+- The host agent's active session model is now the only semantic analysis path.
+
+### Security
+- `.env` loading is restricted to an explicit non-model allowlist; unknown model credentials are ignored.
+
+---
+
 ## [5.4.1] - 2026-07-25
 
 ### Changed

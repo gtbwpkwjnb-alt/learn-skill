@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import os
 from pathlib import Path
 import sys
@@ -30,63 +31,19 @@ class TranscriptCleaningTests(unittest.TestCase):
         self.assertIn("说话人 1: 这是第一句", cleaned)
         self.assertIn("发言人2: 这是第二句", cleaned)
 
-    def test_analysis_prompts_are_format_safe(self):
-        mapped = module.MAP_ANALYSIS_PROMPT.format(
-            title="测试", segment_number=1, segment_count=1, transcript="原文"
-        )
-        reduced = module.REDUCE_ANALYSIS_PROMPT.format(title="测试", facts_json="[]")
-        self.assertIn('"claim"', mapped)
-        self.assertIn('"highlights"', reduced)
-
-    def test_map_parser_accepts_object_wrapped_facts(self):
-        facts = module._parse_map_facts_payload(
-            '{"facts":[{"claim":"事实","evidence_quote":"原文证据"}]}'
-        )
-        self.assertEqual(facts[0]["claim"], "事实")
-
     def test_analysis_fallback_keeps_timestamped_source_lines(self):
-        original_key = module.DEEPSEEK_KEY
-        module.DEEPSEEK_KEY = ""
-        try:
-            result = module.generate_structured_analysis("标题", "[00:01] 可验证的原文。")
-        finally:
-            module.DEEPSEEK_KEY = original_key
-
+        result = module.generate_structured_analysis("标题", "[00:01] 可验证的原文。")
         self.assertEqual(result.category, "转录待整理")
         self.assertTrue(result.summary)
         self.assertEqual(result.highlights[0]["evidence"], "可验证的原文。")
 
-    def test_map_reduce_verify_keeps_only_evidenced_items(self):
-        original_key = module.DEEPSEEK_KEY
-        original_call = module._call_deepseek
-        original_record = module._record_api_call
-        original_budget = module._check_analysis_api_budget
-        original_external = os.environ.get("LEARN_ENABLE_EXTERNAL_AI")
-        module.DEEPSEEK_KEY = "test-key"
-        os.environ["LEARN_ENABLE_EXTERNAL_AI"] = "1"
-
-        def fake_call(prompt, **kwargs):
-            if kwargs["call_type"] == "analysis_map":
-                return ('[{"claim":"事实","evidence_quote":"原文证据","timestamp":"00:01","speaker":"Speaker 1","confidence":"high","topic":"测试"}]', {})
-            return ('{"category":"测试","tags":["测试"],"summary":"摘要","chapters":[],"highlights":[{"time":"00:01","text":"正确","evidence":"原文证据"},{"time":"00:02","text":"错误","evidence":"不存在"}],"glossary":[],"rating":{"overall":4},"flashcards":[],"deep_questions":[]}', {})
-
-        try:
-            module._call_deepseek = fake_call
-            module._record_api_call = lambda *args, **kwargs: None
-            module._check_analysis_api_budget = lambda *_args, **_kwargs: True
-            result = module.generate_structured_analysis("标题", "[00:01] Speaker 1: 原文证据")
-        finally:
-            module.DEEPSEEK_KEY = original_key
-            module._call_deepseek = original_call
-            module._record_api_call = original_record
-            module._check_analysis_api_budget = original_budget
-            if original_external is None:
-                os.environ.pop("LEARN_ENABLE_EXTERNAL_AI", None)
-            else:
-                os.environ["LEARN_ENABLE_EXTERNAL_AI"] = original_external
-
-        self.assertEqual([item["text"] for item in result.highlights], ["正确"])
-        self.assertEqual(result.verification["rejected"]["highlights"], 1)
+    def test_analysis_does_not_expose_external_model_hooks(self):
+        source = inspect.getsource(module.generate_structured_analysis)
+        self.assertNotIn("requests", source)
+        self.assertNotIn("http", source)
+        result = module.generate_structured_analysis("标题", "[00:01] 原文证据")
+        self.assertTrue(result.verification["fallback"])
+        self.assertIn("宿主 agent", result.verification["reason"])
 
     def test_progress_keeps_link_and_verification_audit_data(self):
         original_progress_file = module.PROGRESS_FILE

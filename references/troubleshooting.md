@@ -6,7 +6,7 @@
 
 - [Environment Issues](#environment)
 - [Extraction Issues](#extraction)
-- [AI Classification / Flashcards](#ai)
+- [Agent Analysis](#ai)
 - [SiYuan Import Issues](#siyuan)
 - [Common Error Codes](#errors)
 
@@ -31,16 +31,14 @@ where ffmpeg        # Windows
 # Linux:   sudo apt install ffmpeg
 ```
 
-### 外部大模型 API 未配置
+### Agent 分析未完成
 
-**Symptom**: `⚠ DEEPSEEK_API_KEY not configured`
+**Symptom**: 提取成功，但最终 Markdown 仍是“转录待整理”。
 
-**Note**: 5.4.1 默认由当前 agent 使用当前会话模型直接完成分类、闪卡和总结，不需要任何外部 API。只有用户明确要求旧版脚本外部分析时才相关。
-
-**Solution（仅外部 API 兼容模式）**: 设置 `LEARN_ENABLE_EXTERNAL_AI=1` 后，再按需配置 `.env`：
-```env
-DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
-```
+**Solution**:
+1. 确认任务目录存在 `transcript.txt`/`transcript.srt` 和 `metadata.json`
+2. 让当前 agent 直接读取这些证据，按 Map → Reduce → Verify 完成语义分析
+3. 使用 `scripts/assemble_md.py` 组装主题-日期 Markdown
 
 ### SiYuan Token not configured
 
@@ -99,7 +97,7 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 **Symptom**: Tech video classified as "Cooking" etc.
 
 **Handling**:
-1. Retry once (temporary API instability)
+1. 让当前 agent 基于原始转写重新核验一次
 2. Manually specify the correct category
 3. Check if transcript contains noise/garbage text
 
@@ -125,37 +123,12 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 
 **Symptom**: `⚠ 亮点生成失败` / `⚠ 深度思考生成失败` / `⚠ 术语生成失败`
 
-**Cause**: 当前 agent 未完成分析，或用户显式启用外部 API 后发生请求失败
+**Cause**: 当前 agent 未完成证据分析，或转写内容不足
 
 **Handling**:
 1. 确认提取任务目录存在 `transcript.txt`/`transcript.srt`
 2. 让当前 agent 使用当前会话模型直接读取转写并完成 Map → Reduce → Verify
 3. 使用 `scripts/assemble_md.py` 生成按主题和日期命名的最终 Markdown
-4. 只有显式启用外部 API 时，才检查 `.api_call_log.json`
-
-### API rate limit reached
-
-**Symptom**: `⚠ 安全拦截：今日 API 调用已达上限` or `⏳ 达每分钟上限`
-
-**Cause**: Exceeded safety limits (200 calls/day or 15 calls/minute)
-
-**Handling**:
-1. Wait until next day for daily limit reset
-2. Or set `LEARN_SKIP_SAFETY=1` in environment to bypass (not recommended)
-3. Check API call usage in `.api_call_log.json`
-4. Reduce batch size — each URL now uses up to 5 API calls (classify + highlights + deep thinking + glossary + rating + flashcards)
-
-### Consecutive failures auto-stop
-
-**Symptom**: `⚠ 连续失败 N 次，跳过后续 AI 步骤`
-
-**Cause**: 3+ consecutive API failures for the same URL
-
-**Handling**:
-1. Check network stability
-2. Verify API key is valid and has sufficient quota
-3. The script will continue processing remaining URLs
-4. The partially-processed document is still saved locally
 
 ### Mermaid knowledge graph empty
 

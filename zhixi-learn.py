@@ -34,13 +34,17 @@ if str(SKILL_DIR) not in sys.path:
 
 # Load .env file if present / 加载 .env 文件
 _ENV_FILE = Path(__file__).parent / ".env"
+_ENV_ALLOWLIST = {
+    "PYTHON_BIN", "FFMPEG_BIN", "LEARN_OUTPUT", "SIYUAN_API", "SIYUAN_TOKEN",
+    "OBSIDIAN_VAULT", "OBSIDIAN_LEARN_ROOT", "HTTP_PROXY", "HTTPS_PROXY",
+}
 if _ENV_FILE.exists():
     for _line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
         _line = _line.strip()
         if _line and not _line.startswith("#") and "=" in _line:
             _k, _v = _line.split("=", 1)
             _k, _v = _k.strip(), _v.strip().strip('"').strip("'")
-            if _k not in os.environ:
+            if _k in _ENV_ALLOWLIST and _k not in os.environ:
                 os.environ[_k] = _v
 
 
@@ -106,7 +110,6 @@ REGISTRY_FILE = DEFAULT_OUT / ".registry.json"
 PROGRESS_FILE = DEFAULT_OUT / ".progress.json"
 
 # ── Unified Timeouts / 统一超时 ──────────────────────────────────────────────
-TIMEOUT_LLM = 45          # DeepSeek API 调用（秒）
 TIMEOUT_WHISPER = 1200    # 本地 Whisper 转写（秒）
 TIMEOUT_NET = 8           # 网络检测（秒）
 TIMEOUT_KB = 20           # 知识库导入（秒）
@@ -122,22 +125,7 @@ SIYUAN_API = os.environ.get("SIYUAN_API", "http://127.0.0.1:6806")
 SIYUAN_TOKEN = os.environ.get("SIYUAN_TOKEN", "")
 SIYUAN_STARTUP_WAIT = 15  # seconds / 秒
 
-# DeepSeek AI — set DEEPSEEK_API_KEY in env or .env file
-DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 
-# ── API Safety Guard / 安全防护 ──────────────────────────────────────────────
-# 防止意外批量调用导致 API 费用超支
-API_CALL_LOG = DEFAULT_OUT / ".api_call_log.json"
-MAX_API_CALLS_PER_RUN = 50       # 单次运行最大 API 调用次数
-MAX_API_CALLS_PER_DAY = 200      # 每日最大 API 调用次数
-MAX_API_CALLS_PER_MINUTE = 15    # 每分钟最大 API 调用次数（新增限流）
-BATCH_CONFIRM_THRESHOLD = 3      # 超过此数量的 URL 需确认后才执行
-MAX_CONSECUTIVE_FAILURES = 3     # 连续失败上限，超限自动跳过
-API_CALL_INTERVAL = 0.5          # 同一 URL 各 API 调用间延迟（秒）
-URL_INTERVAL = 1.0               # 各 URL 处理间延迟（秒）
-
-from scripts.analysis_pipeline import JsonPayloadError, parse_json_payload, split_transcript, verify_analysis_payload
 from scripts.bilibili_provider import fetch_bilibili_subtitles
 from scripts.douyin_profile import enumerate_profile_videos, is_profile_url, write_profile_report
 from scripts.link_normalizer import LinkNormalizationError, normalize_input
@@ -152,121 +140,6 @@ OBSIDIAN_VAULT = os.environ.get("OBSIDIAN_VAULT", "")
 # Keep the generic "learn" default for other vaults; a knowledge base can opt
 # into its own collection structure through OBSIDIAN_LEARN_ROOT.
 OBSIDIAN_LEARN_ROOT = os.environ.get("OBSIDIAN_LEARN_ROOT", "learn")
-
-# ═══════════════════════════════════════════════════════════════════════════
-# API 重试 & 错误分类 / API Retry & Error Classification
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _classify_api_error(e: Exception) -> str:
-    """Classify an API error into categories for retry decision.
-    
-    Returns: "transient" | "rate_limit" | "auth" | "permanent"
-    """
-    import requests
-    if isinstance(e, requests.exceptions.Timeout):
-        return "transient"
-    if isinstance(e, requests.exceptions.ConnectionError):
-        return "transient"
-    if isinstance(e, requests.exceptions.HTTPError):
-        status = e.response.status_code if e.response is not None else 0
-        if status == 429:
-            return "rate_limit"
-        if status in (401, 403):
-            return "auth"
-        if status >= 500:
-            return "transient"
-        return "permanent"
-    if isinstance(e, requests.exceptions.RequestException):
-        return "transient"
-    # JSON / parsing errors — permanent
-    if isinstance(e, (json.JSONDecodeError, KeyError, IndexError, TypeError)):
-        return "permanent"
-    return "transient"
-
-
-def _api_call_with_retry(
-    func,
-    max_retries: int = 3,
-    retry_delays: tuple = (1, 2, 4),
-    label: str = "API",
-) -> tuple:
-    """Call an API function with exponential backoff retry.
-    
-    Args:
-        func: Callable that returns (response_json, ...) or raises
-        max_retries: Max retry attempts
-        retry_delays: Delay in seconds between retries (exponential)
-        label: Human-readable label for logging
-        
-    Returns:
-        (response_json, other_values...) on success
-        Raises the last exception on permanent failure.
-    """
-    last_error = None
-    for attempt in range(max_retries + 1):
-        try:
-            result = func()
-            return result
-        except Exception as e:
-            last_error = e
-            err_type = _classify_api_error(e)
-            
-            if err_type == "auth":
-                print(f"  ⚠ {label}: API 认证失败（{e}），停止重试")
-                raise
-            if err_type == "permanent":
-                print(f"  ⚠ {label}: 不可恢复错误（{e}），停止重试")
-                raise
-            if attempt < max_retries:
-                delay = retry_delays[min(attempt, len(retry_delays) - 1)]
-                print(f"  ⚠ {label}: 第{attempt+1}次失败（{err_type}），{delay}s 后重试...")
-                time.sleep(delay)
-            else:
-                print(f"  ❌ {label}: 已重试 {max_retries} 次仍失败: {e}")
-                raise
-    raise last_error  # unreachable, but satisfies type checker
-
-
-# ── Rate Limiting / 速率限制 ──────────────────────────────────────────────────
-
-_rate_limit_window: List[float] = []  # timestamps of recent API calls (seconds)
-
-
-def _check_rate_limit() -> bool:
-    """Check and enforce per-minute rate limit. Returns True if allowed."""
-    global _rate_limit_window
-    now = time.time()
-    # Purge entries older than 60s
-    _rate_limit_window = [ts for ts in _rate_limit_window if now - ts < 60]
-    if len(_rate_limit_window) >= MAX_API_CALLS_PER_MINUTE:
-        sleep_time = 60 - (now - _rate_limit_window[0])
-        if sleep_time > 0:
-            print(f"  ⏳ 达每分钟上限 ({MAX_API_CALLS_PER_MINUTE})，等待 {sleep_time:.0f}s...")
-            time.sleep(sleep_time)
-        _rate_limit_window.clear()
-    _rate_limit_window.append(time.time())
-    return True
-
-
-# ── Token Tracking / Token 追踪 ───────────────────────────────────────────────
-
-def _extract_usage(resp_json: dict) -> dict:
-    """Extract token usage from DeepSeek API response."""
-    usage = resp_json.get("usage", {}) or {}
-    return {
-        "prompt_tokens": usage.get("prompt_tokens", 0),
-        "completion_tokens": usage.get("completion_tokens", 0),
-        "total_tokens": usage.get("total_tokens", 0),
-    }
-
-
-def _estimate_cost(usage: dict) -> float:
-    """Estimate cost in USD from token usage (DeepSeek pricing)."""
-    # DeepSeek: ~$0.5/M input tokens, ~$2/M output tokens
-    prompt_cost = usage.get("prompt_tokens", 0) * 0.5 / 1_000_000
-    completion_cost = usage.get("completion_tokens", 0) * 2.0 / 1_000_000
-    return round(prompt_cost + completion_cost, 6)
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Network Environment Detection / 网络环境检测
@@ -624,89 +497,7 @@ def load_bilibili_cookie() -> Optional[str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Flashcard Generation / 闪卡生成
-# ═══════════════════════════════════════════════════════════════════════════
-
-MAP_CHUNK_CHARS = 6000
-
-MAP_ANALYSIS_PROMPT = """You are an evidence-first learning analyst. Extract atomic facts from one transcript segment.
-
-Rules:
-1. Each claim contains exactly one fact from the segment.
-2. evidence_quote must be a verbatim source quote and timestamp must come from the source when present.
-3. Preserve speaker labels when present. Do not infer missing information.
-4. Return JSON only: [{{"claim":"...","evidence_quote":"...","timestamp":"MM:SS or empty","speaker":"... or empty","confidence":"high|medium|low","topic":"..."}}].
-
-Title: {title}
-Segment {segment_number}/{segment_count}:
-{transcript}"""
-
-REDUCE_ANALYSIS_PROMPT = """You are a professional learning analyst. Build one structured learning card only from the verified atomic facts below.
-
-Rules:
-1. Do not add facts not represented by evidence_quote.
-2. Merge duplicates and mark contradictions in the relevant text instead of silently choosing a side.
-3. Every list item must include an exact evidence field copied from an evidence_quote.
-4. Use MM:SS where available. Return valid JSON only.
-
-Schema:
-{{
-  "category":"...", "tags":["..."],
-  "summary":"three concise paragraphs: TL;DR, details, implications",
-  "chapters":[{{"title":"...","time":"MM:SS","points":["..."],"summary":"...","evidence":"..."}}],
-  "highlights":[{{"time":"MM:SS","text":"...","evidence":"..."}}],
-  "glossary":[{{"term":"...","definition":"...","evidence":"..."}}],
-  "rating":{{"information_density":4.0,"practicality":4.0,"clarity":4.0,"overall":4.0}},
-  "flashcards":[{{"q":"...","a":"...","evidence":"..."}}],
-  "deep_questions":[{{"q":"...","a":"...","evidence":"..."}}]
-}}
-
-Title: {title}
-Atomic facts:
-{facts_json}"""
-
-
-FLASHCARD_THRESHOLD = 500
-
-
-def _call_deepseek(prompt: str, temperature: float = 0.3, max_tokens: int = 800,
-                   call_type: str = "api", label: str = "API") -> tuple:
-    """Unified DeepSeek API call with retry, rate limiting, and token tracking.
-    
-    Returns:
-        (response_text, usage_dict)
-    Raises on permanent failure.
-    """
-    import requests
-    
-    _check_rate_limit()
-    
-    def _do_call():
-        resp = requests.post(
-            f"{DEEPSEEK_BASE}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            },
-            timeout=TIMEOUT_LLM,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        text = data["choices"][0]["message"]["content"].strip()
-        usage = _extract_usage(data)
-        return text, usage
-    
-    return _api_call_with_retry(_do_call, max_retries=3, label=label)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Unified Structured Analysis — 1 API call replaces old 6 calls
+# Structured Analysis / 结构化分析
 # ═══════════════════════════════════════════════════════════════════════════
 
 @dataclass
@@ -751,129 +542,16 @@ def _fallback_structured_analysis(transcript: str, reason: str) -> StructuredAna
     )
 
 
-def _parse_map_facts_payload(response: str) -> List[Dict]:
-    """Accept the documented list schema and common object wrappers safely."""
-    try:
-        payload = parse_json_payload(response, list)
-    except JsonPayloadError:
-        wrapped = parse_json_payload(response, dict)
-        for key in ("facts", "claims", "items", "data"):
-            items = wrapped.get(key)
-            if isinstance(items, list):
-                payload = items
-                break
-        else:
-            if isinstance(wrapped.get("claim"), str) and isinstance(wrapped.get("evidence_quote"), str):
-                payload = [wrapped]
-            else:
-                raise JsonPayloadError("Map JSON 未包含事实列表")
-    return [item for item in payload if isinstance(item, dict)]
-
-
-def _map_transcript_facts(title: str, chunks: List[str]) -> tuple[List[Dict], int]:
-    facts: List[Dict] = []
-    for index, chunk in enumerate(chunks, 1):
-        prompt = MAP_ANALYSIS_PROMPT.format(
-            title=title,
-            segment_number=index,
-            segment_count=len(chunks),
-            transcript=chunk,
-        )
-        try:
-            response, usage = _call_deepseek(
-                prompt, temperature=0.1, max_tokens=1400,
-                call_type="analysis_map", label=f"AI Map {index}/{len(chunks)}",
-            )
-            _record_api_call("analysis_map", f"{title}#{index}", "deepseek-chat", usage)
-            facts.extend(_parse_map_facts_payload(response))
-        except Exception as e:
-            print(f"  ⚠ Map 第 {index}/{len(chunks)} 段失败: {e}")
-    return facts, len(chunks)
-
-
-def _reduce_analysis_facts(title: str, facts: List[Dict]) -> Dict:
-    payload = json.dumps(facts, ensure_ascii=False, separators=(",", ":"))
-    prompt = REDUCE_ANALYSIS_PROMPT.format(title=title, facts_json=payload)
-    response, usage = _call_deepseek(
-        prompt, temperature=0.2, max_tokens=3000,
-        call_type="analysis_reduce", label="AI Reduce",
-    )
-    _record_api_call("analysis_reduce", title, "deepseek-chat", usage)
-    return parse_json_payload(response, dict)
-
-
 def generate_structured_analysis(title: str, transcript: str) -> StructuredAnalysis:
-    """Analyze all transcript chunks, then verify every rendered evidence item."""
-    result = StructuredAnalysis()
+    """Return a local evidence placeholder for host-agent analysis.
 
-    # Semantic analysis belongs to the parent agent. Keep extraction
-    # API-free by default; legacy external analysis requires explicit opt-in.
-    if os.environ.get("LEARN_ENABLE_EXTERNAL_AI", "").lower() not in {"1", "true", "yes"}:
-        return _fallback_structured_analysis(
-            transcript, "当前由 agent 会话模型直接分析；未调用外部大模型 API"
-        )
-    
-    if not DEEPSEEK_KEY:
-        print("  ⚠ DEEPSEEK_API_KEY 未配置，跳过 AI 分析")
-        return _fallback_structured_analysis(transcript, "DEEPSEEK_API_KEY 未配置")
-    
-    try:
-        chunks = split_transcript(transcript, max_chars=MAP_CHUNK_CHARS)
-        if not chunks:
-            return _fallback_structured_analysis(transcript, "转写为空")
-        expected_calls = len(chunks) + 1  # Map for each chunk, then one Reduce call.
-        if not _check_analysis_api_budget(expected_calls):
-            return _fallback_structured_analysis(transcript, "分析 API 预算不足")
-        facts, chunk_count = _map_transcript_facts(title, chunks)
-        if not facts:
-            print("  ⚠ 未提取到可验证的原子知识点，跳过 Reduce")
-            return _fallback_structured_analysis(transcript, "Map 未返回可用原子事实")
-
-        print(f"  🧩 Map 完成: {chunk_count} 段 / {len(facts)} 条原子知识点")
-        data = _reduce_analysis_facts(title, facts)
-        data, verification = verify_analysis_payload(data, transcript)
-        result.verification = verification
-        
-        result.category = data.get("category", "未分类")
-        result.tags = data.get("tags", []) or []
-        result.summary = data.get("summary", "") or ""
-        result.chapters = data.get("chapters", []) or []
-        result.highlights = data.get("highlights", []) or []
-        result.glossary = data.get("glossary", []) or []
-        result.flashcards = data.get("flashcards", []) or []
-        result.deep_questions = data.get("deep_questions", []) or []
-        
-        rd = data.get("rating", {}) or {}
-        if isinstance(rd, dict):
-            result.rating_detail = rd
-            overall = rd.get("overall", 0)
-            result.rating = str(overall)
-        
-        print(f"  🏷 分类: {result.category} | 标签: {', '.join(result.tags)}")
-        if result.chapters:
-            print(f"  📑 章节: {len(result.chapters)} 个")
-        if result.highlights:
-            print(f"  ⭐ 亮点: {len(result.highlights)} 条")
-        if result.glossary:
-            print(f"  📚 术语: {len(result.glossary)} 条")
-        if result.flashcards:
-            print(f"  🃏 闪卡: {len(result.flashcards)} 张")
-        if result.deep_questions:
-            print(f"  🤔 深度思考: {len(result.deep_questions)} 组")
-        if result.rating:
-            print(f"  🌟 综合评分: {result.rating}/5")
-        rejected = sum(verification.get("rejected", {}).values())
-        if rejected:
-            print(f"  🔎 Verify 已移除 {rejected} 条无原文证据的内容")
-
-    except (JsonPayloadError, json.JSONDecodeError) as e:
-        print(f"  ⚠ AI JSON 解析失败: {e}")
-        return _fallback_structured_analysis(transcript, f"AI JSON 解析失败: {e}")
-    except Exception as e:
-        print(f"  ⚠ AI 综合分析失败: {e}")
-        return _fallback_structured_analysis(transcript, f"AI 综合分析失败: {e}")
-    
-    return result
+    The skill intentionally does not invoke any model API. The active host
+    agent reads the extracted transcript and writes the semantic Markdown
+    summary; this function only keeps standalone CLI output non-empty.
+    """
+    return _fallback_structured_analysis(
+        transcript, "宿主 agent 负责当前会话模型分析；本地脚本不调用外部模型 API"
+    )
 
 
 def build_related_notes(tags: List[str], current_title: str, max_notes: int = 5) -> List[Dict[str, str]]:
@@ -1733,103 +1411,6 @@ def _write_temp_cookie(cookie: str) -> str:
     return path
 
 
-# ── API Safety Guard functions ───────────────────────────────────────────────
-# 安全防护函数：API 调用计数、批量确认、调用日志
-
-def _api_call_log_path() -> Path:
-    API_CALL_LOG.parent.mkdir(parents=True, exist_ok=True)
-    return API_CALL_LOG
-
-
-def _load_api_call_log() -> dict:
-    """加载 API 调用日志，按日期统计调用次数"""
-    path = _api_call_log_path()
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {"calls": [], "daily_count": {}}
-
-
-def _save_api_call_log(log: dict) -> None:
-    path = _api_call_log_path()
-    path.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _record_api_call(call_type: str, url: str = "", model: str = "deepseek-chat",
-                     usage: Optional[dict] = None) -> None:
-    """记录一次 API 调用到本地日志（含 Token 消耗）"""
-    today = datetime.now().strftime("%Y-%m-%d")
-    log = _load_api_call_log()
-    log.setdefault("calls", []).append({
-        "time": datetime.now().isoformat(),
-        "type": call_type,
-        "url": url,
-        "model": model,
-        "usage": usage or {},
-    })
-    log.setdefault("daily_count", {})
-    log["daily_count"][today] = log["daily_count"].get(today, 0) + 1
-    # 累计 token
-    if usage:
-        log.setdefault("total_tokens", 0)
-        log["total_tokens"] += usage.get("total_tokens", 0)
-        log.setdefault("total_cost", 0.0)
-        log["total_cost"] += _estimate_cost(usage)
-    _save_api_call_log(log)
-
-
-def _check_api_safety(urls_count: int) -> bool:
-    """检查 API 调用是否在安全限额内，超限则报错退出"""
-    today = datetime.now().strftime("%Y-%m-%d")
-    log = _load_api_call_log()
-    daily_used = log.get("daily_count", {}).get(today, 0)
-
-    # 初筛只知道 URL 数；提取转录后会按实际 Map 分段再次精确检查。
-    estimated_calls = urls_count * 2
-
-    if estimated_calls > MAX_API_CALLS_PER_RUN:
-        print(f"⚠ 安全拦截：本次预计 {estimated_calls} 次 API 调用，超过单次运行上限 {MAX_API_CALLS_PER_RUN}")
-        print(f"  如需继续请设置环境变量 LEARN_SKIP_SAFETY=1 或减少 URL 数量")
-        return False
-
-    if daily_used + estimated_calls > MAX_API_CALLS_PER_DAY:
-        print(f"⚠ 安全拦截：今日已用 {daily_used} 次 API 调用，"
-              f"加上本次预计 {estimated_calls} 次将超过每日上限 {MAX_API_CALLS_PER_DAY}")
-        print(f"  如需继续请设置环境变量 LEARN_SKIP_SAFETY=1，或明天再试")
-        return False
-
-    if urls_count > BATCH_CONFIRM_THRESHOLD and "LEARN_SKIP_SAFETY" not in os.environ:
-        print(f"⚠ 批量处理警告：即将处理 {urls_count} 个链接，预计产生约 {estimated_calls} 次 API 调用")
-        print(f"  按 Enter 继续，或 Ctrl+C 取消...")
-        try:
-            input()
-        except (KeyboardInterrupt, EOFError):
-            print("\n❌ 已取消")
-            return False
-
-    return True
-
-
-def _check_analysis_api_budget(expected_calls: int) -> bool:
-    """Check the exact Map + Reduce call budget after the transcript is available."""
-    if "LEARN_SKIP_SAFETY" in os.environ:
-        return True
-    log = _load_api_call_log()
-    today = datetime.now().strftime("%Y-%m-%d")
-    daily_used = log.get("daily_count", {}).get(today, 0)
-    if expected_calls > MAX_API_CALLS_PER_RUN:
-        print(f"⚠ 分段分析预计 {expected_calls} 次 API 调用，超过单任务上限 {MAX_API_CALLS_PER_RUN}")
-        print("  请缩短内容、调整分段大小，或显式设置 LEARN_SKIP_SAFETY=1")
-        return False
-    if daily_used + expected_calls > MAX_API_CALLS_PER_DAY:
-        print(f"⚠ 分段分析预计 {expected_calls} 次调用，今日额度不足 ({daily_used}/{MAX_API_CALLS_PER_DAY})")
-        return False
-    print(f"  🤖 分段分析预计调用: Map {expected_calls - 1} 次 + Reduce 1 次")
-    return True
-
-
 def cleanup_task_workspace(task_dir: Path, output_root: Path) -> bool:
     """Remove a completed task's local artifacts only after vault export succeeds."""
     try:
@@ -1987,7 +1568,7 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
             else:
                 md_path = run_douyin(url, task_dir, with_frames)
             # 抖音兜底：如果 extract_douyin 失败，用 yt-dlp + whisper 直接下载
-            if not md_path and DEEPSEEK_KEY:
+            if not md_path:
                 print(f"  ⚠ 抖音提取失败，尝试 yt-dlp + whisper 兜底...")
                 md_path = _whisper_fallback_douyin(url, task_dir)
         elif not md_path and platform == "bilibili":
@@ -2213,10 +1794,6 @@ def main():
         print("❌ 没有可处理的视频链接")
         sys.exit(1)
 
-    # ── API 安全防护检查 ──────────────────────────────────────────────────────
-    if not _check_api_safety(len(urls)):
-        sys.exit(1)
-
     # Process all URLs / 批量处理
     success = 0; fail = 0
     for raw_input in urls:
@@ -2228,22 +1805,9 @@ def main():
         else:
             fail += 1
 
-    # 输出本次 API 调用统计（含 Token 和费用）
-    log = _load_api_call_log()
-    today = datetime.now().strftime("%Y-%m-%d")
-    today_count = log.get("daily_count", {}).get(today, 0)
-    total_count = sum(log.get("daily_count", {}).values())
-    total_tokens = log.get("total_tokens", 0)
-    total_cost = log.get("total_cost", 0.0)
-    print(f"\n  📊 API 调用统计:")
-    print(f"    今日: {today_count} 次 / 累计: {total_count} 次")
-    if total_tokens:
-        print(f"    Token: {total_tokens:,} (≈ ${total_cost:.4f})")
     fail += profile_failures
     if fail > 0:
         print(f"    ⚠ 失败: {fail} 个 URL")
-    print(f"  📋 详情见: {API_CALL_LOG}")
-
     print(f"\n{'='*60}")
     print(f"📊 处理完成: {success} 成功, {fail} 失败 (共 {len(urls)} 个)")
     print(f"📁 输出目录: {out_dir}")
