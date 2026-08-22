@@ -169,6 +169,22 @@ learn-skill/
 
 ---
 
+## 🚀 DeepSeek Harness 插件市场
+
+本仓库同时是 DeepSeek Harness（dsh）技能包插件，可通过 dsh 插件系统安装：
+
+```bash
+dsh plugin --profile web add github:gtbwpkwjnb-alt/learn-skill
+```
+
+安装后重启 dsh web，技能出现在 Settings → Plugins，按需懒加载（渐进式披露）。技能包由本仓库根目录的 `SKILL.md` 提供，`cordis.patch.yml` + `index.js` 为插件外壳（只读 skill provider，无工具、无凭据、无网络请求）。
+
+- 测试兼容版本：dsh v0.1.1-rc.2（2026-08-22）。预览期版本迭代快，若 API 变更请以官方文档为准。
+- 技能格式：kebab-case 名称 + `name`/`description` frontmatter，与 dsh 技能契约一致。
+- 插件外壳无 npm 依赖，可从 GitHub 直装。
+
+---
+
 ## 📄 License
 
 MIT

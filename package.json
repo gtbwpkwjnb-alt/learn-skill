@@ -1,0 +1,43 @@
+{
+  "name": "learn-skill",
+  "version": "5.6.0",
+  "description": "DeepSeek Harness bundle that registers the learn skill pack on ctx.skills.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "SKILL.md",
+    "references",
+    "scripts",
+    "agents",
+    "learn_core",
+    "zhixi-learn.py",
+    "README.md",
+    "CHANGELOG.md",
+    "VERSION"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/gtbwpkwjnb-alt/learn-skill",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gtbwpkwjnb-alt/learn-skill.git"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "learn",
+    "agent-skills",
+    "knowledge-graph",
+    "flashcards"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
