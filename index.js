@@ -34,9 +34,17 @@ const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const TRUE_FORMS = new Set(['true', 'yes', 'on', '1'])
 const FALSE_FORMS = new Set(['false', 'no', 'off', '0'])
 
-/** Parse YAML frontmatter with plain scalars and |/> block scalars. */
+/**
+ * Parse YAML frontmatter: plain scalars, quoted values (including multiline),
+ * `|`/`>` block scalars with chomping/indent indicators, and inline comments.
+ * Returns `{ fields, body }` or `undefined` when the file is not a valid
+ * frontmatter document.
+ */
 function parseSkillText(text) {
-  if (typeof text !== 'string' || !text.startsWith('---')) return undefined
+  if (typeof text !== 'string') return undefined
+  // Strip a UTF-8 BOM; it silently breaks the `---` opener on Windows.
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
+  if (!text.startsWith('---')) return undefined
   const firstNewline = text.indexOf('\n')
   if (firstNewline < 0) return undefined
   const closing = findClosingFrontmatter(text, firstNewline + 1)
@@ -50,17 +58,29 @@ function parseSkillText(text) {
     const match = /^([A-Za-z0-9_-]+):(.*)$/.exec(trimmed)
     if (match === null) { i += 1; continue }
     const key = match[1]
-    const rest = match[2].trim()
-    if (rest === '' || rest === '|' || rest === '>') {
+    const rest = stripInlineComment(match[2].trim())
+    const blockStyle = /^[|>][-+]?[0-9]*$/.test(rest) ? rest[0] : null
+    if (blockStyle !== null) {
       const block = []
       i += 1
       while (i < lines.length && (lines[i].trim() === '' || /^\s+\S/.test(lines[i]))) {
         block.push(lines[i].trim())
         i += 1
       }
-      fields[key] = block.join('\n')
+      // Folded scalars (>) collapse single newlines between non-blank lines;
+      // literal scalars (|) keep every line break.
+      let value = blockStyle === '>' ? foldBlock(block) : block.join('\n')
+      // Chomping: default clip keeps one trailing newline, `|-`/`>-` strip
+      // them, `|+`/`>+` keep all.
+      if (rest.includes('-')) value = value.replace(/\n+$/, '')
+      else if (!rest.includes('+')) value = value.replace(/\n+$/, '\n')
+      fields[key] = value
+    } else if (rest === '') {
+      // Explicit null value; never swallow following indented lines.
+      fields[key] = ''
+      i += 1
     } else {
-      fields[key] = rest
+      fields[key] = readValue(rest, lines, i, (index) => { i = index })
       i += 1
     }
   }
@@ -79,9 +99,71 @@ function findClosingFrontmatter(text, start) {
   return -1
 }
 
+/** Continue a quoted scalar onto following lines until its quote closes. */
+function readValue(first, lines, fromIndex, advance) {
+  const quote = first[0] === '"' || first[0] === "'" ? first[0] : null
+  if (quote === null || isQuoteClosed(first, quote)) return first
+  let value = first
+  let i = fromIndex + 1
+  while (i < lines.length) {
+    const nextLine = lines[i].trim()
+    if (nextLine === '') break
+    value += '\n' + nextLine
+    i += 1
+    if (isQuoteClosed(value, quote)) break
+  }
+  advance(i - 1)
+  return value
+}
+
+function isQuoteClosed(value, quote) {
+  if (value.length < 2 || value[value.length - 1] !== quote) return false
+  if (quote === '"') {
+    let backslashes = 0
+    for (let j = value.length - 2; j >= 0 && value[j] === '\\'; j -= 1) backslashes += 1
+    return backslashes % 2 === 0
+  }
+  return value[value.length - 2] !== quote
+}
+
+function foldBlock(block) {
+  let out = ''
+  let pendingBlank = false
+  for (const line of block) {
+    if (line === '') { pendingBlank = true; continue }
+    if (out !== '') {
+      out += pendingBlank ? '\n' : ' '
+    }
+    out += line
+    pendingBlank = false
+  }
+  return out
+}
+
+/** Strip a trailing ` # comment` that is outside any quoted value. */
+function stripInlineComment(value) {
+  const quote = value[0] === '"' || value[0] === "'" ? value[0] : null
+  if (quote !== null) {
+    for (let k = 1; k < value.length; k += 1) {
+      if (value[k] === quote && !(quote === '"' && value[k - 1] === '\\') && !(quote === "'" && value[k + 1] === "'")) {
+        const tail = value.slice(k + 1)
+        return /^\s+#/.test(tail) ? value.slice(0, k + 1) : value
+      }
+    }
+    return value
+  }
+  const m = /\s+#/.exec(value)
+  return m === null ? value : value.slice(0, m.index)
+}
+
 function scalar(value) {
   if (value === undefined) return undefined
-  return value.replace(/^(["'])(.*)\1$/, '$2')
+  const v = value.trim()
+  if (v.length >= 2 && ((v[0] === '"' && v[v.length - 1] === '"') || (v[0] === "'" && v[v.length - 1] === "'"))) {
+    const inner = v.slice(1, -1)
+    return v[0] === '"' ? inner.replace(/\\"/g, '"').replace(/\\\\/g, '\\') : inner.replace(/''/g, "'")
+  }
+  return v
 }
 
 function parseBoolean(value) {
@@ -118,7 +200,10 @@ class PackSkillProvider {
 
   async list() {
     const skill = await this.readSkill(SKILL_FILE)
-    if (skill === undefined) return []
+    if (skill === undefined) {
+      this.ctx.logger?.warn?.(`${PROVIDER_NAME}: no valid SKILL.md at ${SKILL_FILE}; skill pack skipped`)
+      return []
+    }
     if (!SKILL_NAME.test(skill.name)) {
       this.ctx.logger?.warn?.(`${PROVIDER_NAME}: skill ${JSON.stringify(skill.name)} ignored: invalid skill name`)
       return []
@@ -139,9 +224,9 @@ class PackSkillProvider {
   }
 
   async get(candidate) {
-    const locator = candidate?.locator
-    if (locator === undefined || typeof locator.dir !== 'string') return undefined
-    const skill = await this.readSkill(join(locator.dir, 'SKILL.md'))
+    // Only serve candidates this provider published.
+    if (candidate?.provider !== PROVIDER_NAME || typeof candidate?.locator?.dir !== 'string') return undefined
+    const skill = await this.readSkill(join(candidate.locator.dir, 'SKILL.md'))
     if (skill === undefined || skill.name !== candidate.name) return undefined
     return {
       name: skill.name,
@@ -166,11 +251,17 @@ class PackSkillProvider {
       throw error
     }
     const parsed = parseSkillText(raw)
-    if (parsed === undefined) return undefined
+    if (parsed === undefined) {
+      this.ctx.logger?.warn?.(`${PROVIDER_NAME}: ${file} ignored: missing YAML frontmatter`)
+      return undefined
+    }
     const { fields, body } = parsed
     const name = scalar(fields.name)
     const description = scalar(fields.description)
-    if (name === undefined || description === undefined || name === '' || description === '') return undefined
+    if (name === undefined || description === undefined || name === '' || description === '') {
+      this.ctx.logger?.warn?.(`${PROVIDER_NAME}: ${file} ignored: frontmatter requires name and description`)
+      return undefined
+    }
     const whenToUse = scalar(fields.whenToUse)
     return {
       name,
@@ -184,6 +275,10 @@ class PackSkillProvider {
 }
 
 export const apply = (ctx) => {
+  if (ctx?.skills?.registerProvider === undefined) {
+    ctx?.logger?.warn?.(`${PROVIDER_NAME}: ctx.skills.registerProvider unavailable; skill pack not registered`)
+    return
+  }
   ctx.skills.registerProvider(() => new PackSkillProvider(ctx))
 }
 

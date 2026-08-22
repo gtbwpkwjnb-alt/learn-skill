@@ -17,6 +17,7 @@
     "agents",
     "learn_core",
     "zhixi-learn.py",
+    ".env.example",
     "README.md",
     "CHANGELOG.md",
     "VERSION"

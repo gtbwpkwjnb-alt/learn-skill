@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 
 
 def _learn_output_dir() -> Path:
-    override = os.environ.get("LEARN_OUTPUT_DIR", "")
+    override = os.environ.get("LEARN_OUTPUT", "")
     if override:
         return Path(override)
     return Path.cwd() / "learn-output"

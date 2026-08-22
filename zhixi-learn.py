@@ -101,7 +101,7 @@ if __name__ == "__main__":
 # Constants / 常量
 # ═══════════════════════════════════════════════════════════════════════════
 PYTHON = os.environ.get("PYTHON_BIN", sys.executable)
-FFMPEG_BIN = os.environ.get("FFMPEG_BIN", r"C:\Tools\ffmpeg-8.1.1-essentials_build\bin")
+FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "")  # optional absolute dir; empty = rely on PATH
 TOOLS_DIR = SKILL_DIR
 DOUYIN2MD = TOOLS_DIR / "scripts" / "extract_douyin.py"
 DOUYIN_PLAYWRIGHT = TOOLS_DIR / "scripts" / "douyin_playwright_extract.py"
@@ -534,7 +534,7 @@ def segment_transcript(text: str, window_minutes: int = 3) -> str:
 
 def load_bilibili_cookie() -> Optional[str]:
     """Load Bilibili cookie from .env / 从 .env 加载B站 Cookie"""
-    env_file = PROJECT_ROOT / ".env"
+    env_file = Path(__file__).parent / ".env"  # skill dir, matches .env.example guidance
     if not env_file.exists():
         return None
 
@@ -708,11 +708,12 @@ def ensure_ffmpeg():
     """Ensure ffmpeg in PATH / 确保 ffmpeg 在 PATH 中"""
     if shutil.which("ffmpeg"):
         return
-    ffmpeg_dir = Path(FFMPEG_BIN)
-    if ffmpeg_dir.is_dir():
-        os.environ["PATH"] = str(ffmpeg_dir) + os.pathsep + os.environ.get("PATH", "")
+    if FFMPEG_BIN:
+        ffmpeg_dir = Path(FFMPEG_BIN)
+        if ffmpeg_dir.is_dir():
+            os.environ["PATH"] = str(ffmpeg_dir) + os.pathsep + os.environ.get("PATH", "")
     if not shutil.which("ffmpeg"):
-        print("❌ ffmpeg 未找到，请确认已安装至 %s" % FFMPEG_BIN, file=sys.stderr)
+        print("❌ ffmpeg 未找到。请安装 ffmpeg 并加入 PATH（winget install Gyan.FFmpeg），或用 FFMPEG_BIN 指定安装目录。", file=sys.stderr)
         sys.exit(1)
 
 

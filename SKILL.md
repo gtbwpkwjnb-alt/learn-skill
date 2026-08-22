@@ -152,6 +152,7 @@ else:
 | PaddleOCR | 🟡 深度模式 | OCR 文字提取 | ⚠ 跳过 OCR |
 | scenedetect | 🟡 深度模式 | 关键帧提取 | ⚠ 跳过关键帧 |
 | browser_cookie3 | 🟢 推荐 | 从浏览器提取 Cookie | ⚠ 跳过浏览器 Cookie 方式，使用无 Cookie 降级 |
+| hearsay | 🟢 推荐（播客/本地） | 播客与本地音频 ASR 转写 | ⚠ 缺失时播客/本地路径无 ASR 转写；`pip install hearsay` |
 
 > **降级规则说明**：
 > - 🔴 缺失 → 自动尝试安装，失败后**提前终止**并告知用户（不执行到一半才报错）
@@ -179,10 +180,10 @@ else:
   ├─ 第1步：平台识别（正则匹配 URL）
   ├─ 第2步：URL 清洗（去除分享杂项，提取纯净链接）
   ├─ 第3步：按平台路由提取：
-  │   ├─ 抖音 → `python tools/zhixi-learn.py <url> --no-import`  # Playwright网络拦截
+  │   ├─ 抖音 → `python zhixi-learn.py <url> --no-import`  # Playwright网络拦截
   │   ├─ B站  → `bilibili-cli 字幕时间线 → yt-dlp → ASR 兜底`
-  │   ├─ 本地 → `python tools/zhixi-learn.py <local_path> --no-import`
-  │   └─ 播客 → `python tools/zhixi-learn.py <url> --no-import`
+  │   ├─ 本地 → `python zhixi-learn.py <local_path> --no-import`
+  │   └─ 播客 → `python zhixi-learn.py <url> --no-import`
   ├─ 第4步：当前 agent 综合分析（全文 Map 分段 → Reduce 汇总 → 原文证据 Verify）
   ├─ 第5步：知识图谱（语义关联：tags 交集匹配已有笔记）
   ├─ 第6步：组装增强 Markdown（关键帧截图 + 层级模板）
@@ -195,7 +196,7 @@ else:
 > 完整平台提取详情、Cookie 配置、兜底策略见 [references/platforms.md](references/platforms.md)
 >
 > 核心命令（统一入口）：
-> - 抖音/TikTok/B站/播客/本地 → `python tools/zhixi-learn.py <url>`
+> - 抖音/TikTok/B站/播客/本地 → `python zhixi-learn.py <url>`
 > - 小红书/通用网页 → `python scripts/extract_webpage.py <url>`
 - 通用网页深度爬取 → **Firecrawl MCP**（已预装，JS渲染/结构化提取）
 
@@ -211,24 +212,25 @@ else:
 
 **强制收尾规则：不得在生成 `summary.md`、`transcript.txt` 或 `transcript.srt` 后结束任务。** 这些只是中间产物。提取命令返回后，当前 agent 必须继续读取证据，完成 Map → Reduce → Verify，调用 `scripts/assemble_md.py` 生成按主题和日期命名的最终 Markdown，并在用户要求或配置允许时执行 `kb_router.py` 导入。最终汇报必须包含该命名文件路径；没有最终 Markdown 时只能报告“未完成”，不得称学习完成。
 
-### Python 执行入口记忆（Windows）
+### Python 执行入口记忆
 
-运行任何 `learn` Python 脚本前，先读取 `$LEARN_OUTPUT/.skill_state.json`（默认 `C:\Users\Administrator\.agents\skills\learn-output\.skill_state.json`）中的 `env.python.path`。按以下顺序选择解释器：
+运行任何 `learn` Python 脚本前，先读取 `<output_dir>/.skill_state.json` 中的 `env.python.path`（由环境自检持久化）。按以下顺序选择解释器：
 
-1. `env.python.path` 存在且可执行时，直接使用该绝对路径；当前已验证路径为 `C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe`。
-2. 路径失效时使用 `py -3.14`，并重新运行环境自检更新状态。
-3. 只有 Python 3.14 不可用时才回退到默认 `python`，并在汇报中明确标记为降级，不得把 3.11 的包缺失误报为环境缺失。
+1. `env.python.path` 存在且可执行时，直接使用该路径（Windows 上为 `python.exe` 的绝对路径）。
+2. 路径失效时：Windows 用 `py -3`（自动选最新 3.x），macOS/Linux 用 `python3`，并重新运行环境自检更新状态。
+3. 都不可用时回退到默认 `python`，并在汇报中明确标记为降级。
 
-示例：
+通用调用形式（不依赖本机绝对路径）：
 
-```powershell
-& 'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe' C:\Users\Administrator\.agents\skills\learn\zhixi-learn.py <URL> --no-import
+```bash
+python zhixi-learn.py <URL> --no-import
+# Windows 多 Python 版本环境: py -3 zhixi-learn.py <URL> --no-import
 ```
 
 对同一 URL 强制重新提取时传入 `--relearn`；它创建新的任务批次，并绕过该输出目录中的 URL 去重。媒体、转写和关键帧完成后任务状态为 `awaiting_host_analysis`，不得报告“学习完成”。当前 agent 完成证据分析并写入主题-日期 Markdown 后，调用：
 
-```powershell
-& 'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe' C:\Users\Administrator\.agents\skills\learn\zhixi-learn.py --out <output_root> --finalize-task <task_id> --final-markdown <final_markdown> [--vault-note <vault_markdown>]
+```bash
+python zhixi-learn.py --out <output_root> --finalize-task <task_id> --final-markdown <final_markdown> [--vault-note <vault_markdown>]
 ```
 
 只有 finalizer 成功回写最终 Markdown 路径后，任务才可标记 `completed` 并进入去重账本。
@@ -464,6 +466,9 @@ save_state(state)
 # 核心（必要）
 pip install yt-dlp faster-whisper
 winget install Gyan.FFmpeg
+
+# 播客/本地 ASR（按需）
+pip install hearsay
 
 # 深度模式增强（推荐）
 pip install scenedetect playwright paddleocr

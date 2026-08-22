@@ -58,13 +58,21 @@ def _module_check(module: str, distribution: str, level: str, impact: str) -> di
     }
 
 
+def _skill_version_default() -> str:
+    version_file = Path(__file__).resolve().parent.parent / "VERSION"
+    try:
+        return version_file.read_text(encoding="utf-8").strip() or "0.0.0"
+    except OSError:
+        return "0.0.0"
+
+
 class SkillState:
     """Own `.skill_state.json` and make routing decisions from observed results."""
 
-    def __init__(self, output_root: Path, skill_version: str = "5.2.0"):
+    def __init__(self, output_root: Path, skill_version: str | None = None):
         self.output_root = Path(output_root)
         self.path = self.output_root / ".skill_state.json"
-        self.skill_version = skill_version
+        self.skill_version = skill_version or _skill_version_default()
         self.data = self._load()
 
     def _default(self) -> dict[str, Any]:
