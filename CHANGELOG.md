@@ -4,6 +4,19 @@ All notable changes to the learn skill.
 
 ---
 
+## [5.6.0] - 2026-07-25
+
+### Added
+- `--relearn` creates a distinct task batch and bypasses URL deduplication for an intentional fresh extraction.
+- `--finalize-task` with `--final-markdown` records the host-produced learning card and optional Vault copy as the completed result.
+- `awaiting_host_analysis` task stage prevents media-only work from being presented as a completed learning result.
+
+### Fixed
+- `--out` now binds the registry and progress files to the requested output root instead of reading the default output registry.
+- Playwright success after a Douyin Cookie restriction is reported explicitly in the extraction log.
+
+---
+
 ## [5.5.0] - 2026-07-25
 
 ### Breaking

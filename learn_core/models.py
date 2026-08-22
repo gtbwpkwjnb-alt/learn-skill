@@ -19,6 +19,7 @@ class TaskStage(StrEnum):
     NORMALIZED = "normalized"
     EXTRACTING = "extracting"
     MEDIA_READY = "media_ready"
+    AWAITING_HOST_ANALYSIS = "awaiting_host_analysis"
     ANALYZING = "analyzing"
     ANALYZED = "analyzed"
     EXPORTING = "exporting"

@@ -1,10 +1,12 @@
 ---
 name: learn
-version: 5.5.0
-description: 学习+分享链接或本地音视频 → 清洗短链与推广参数、提取字幕或转写、关键帧 OCR、证据核验 AI 总结、闪卡与 Obsidian/思源 Markdown 导入。适用于抖音、B站、YouTube、播客及网页学习内容。
+description: |
+  学习+分享链接或本地音视频 → 清洗短链与推广参数、提取字幕或转写、关键帧 OCR、证据核验 AI 总结、闪卡与 Obsidian/思源 Markdown 导入。适用于抖音、B站、YouTube、播客及网页学习内容。
+  典型触发："学习这个视频""把这个链接做成笔记""提取字幕""转写播客""生成闪卡""导入 Obsidian""听课总结"。
+  不用于：书籍/长内容蒸馏成方法论技能（归 cangjie-skill）。
 ---
 
-# zhixi-learn v5.5.0
+# zhixi-learn v5.6.0
 
 > **一条链接 → 全增强知识卡片。** AI 分类 + 亮点提取 + 深度思考 + 术语解释 + 评分 + 知识图谱 + 闪卡 + 章节总结 + 多知识库导入。双速自适应，零配置。
 >
@@ -222,6 +224,14 @@ else:
 ```powershell
 & 'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe' C:\Users\Administrator\.agents\skills\learn\zhixi-learn.py <URL> --no-import
 ```
+
+对同一 URL 强制重新提取时传入 `--relearn`；它创建新的任务批次，并绕过该输出目录中的 URL 去重。媒体、转写和关键帧完成后任务状态为 `awaiting_host_analysis`，不得报告“学习完成”。当前 agent 完成证据分析并写入主题-日期 Markdown 后，调用：
+
+```powershell
+& 'C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe' C:\Users\Administrator\.agents\skills\learn\zhixi-learn.py --out <output_root> --finalize-task <task_id> --final-markdown <final_markdown> [--vault-note <vault_markdown>]
+```
+
+只有 finalizer 成功回写最终 Markdown 路径后，任务才可标记 `completed` 并进入去重账本。
 
 每次成功运行后，将实际使用的解释器、版本、平台提取方法和结果写回 `.skill_state.json`；下次优先复用最近一次成功路径，不以当前 shell 的 `python` 命令作为唯一依据。
 

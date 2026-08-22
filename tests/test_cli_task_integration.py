@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import unittest
 
+from learn_core.models import TaskStage
 from learn_core.task_store import TaskStore
 
 
@@ -113,7 +114,7 @@ class CliTaskIntegrationTests(unittest.TestCase):
             visual_mock.assert_called_once()
             self.assertIn("画面文字", summary.read_text(encoding="utf-8"))
 
-    def test_douyin_task_writes_manifest_analysis_and_obsidian_markdown(self):
+    def test_douyin_task_waits_for_host_analysis_then_finalizes(self):
         module = _load_cli_module()
         with tempfile.TemporaryDirectory() as tmp:
             output_root = Path(tmp) / "output"
@@ -133,10 +134,6 @@ class CliTaskIntegrationTests(unittest.TestCase):
                 return summary
 
             module.run_douyin = fake_extract
-            module.generate_structured_analysis = lambda *_args: module.StructuredAnalysis(
-                category="测试", tags=["抖音"], summary="总结", rating="4",
-                highlights=[{"time": "00:01", "text": "要点", "evidence": "原始证据文本"}],
-            )
             env = module.NetworkEnv()
             env.bilibili_ok = True
             module.is_duplicate = lambda _url: False
@@ -151,15 +148,17 @@ class CliTaskIntegrationTests(unittest.TestCase):
             self.assertTrue((task_dir / "task.json").exists())
             self.assertTrue((task_dir / "source.json").exists())
             self.assertTrue((task_dir / "artifacts.json").exists())
-            analysis = next(task_dir.rglob("analysis.json"))
-            self.assertIn("原始证据文本", analysis.read_text(encoding="utf-8"))
-            note = next(task_dir.rglob("summary.md"))
-            markdown = note.read_text(encoding="utf-8")
-            self.assertIn('task_id: "', markdown)
-            self.assertIn("原始证据文本", markdown)
-            self.assertNotIn("不应进入最终笔记的全文句子", markdown)
+            task_id = next((output_root / "_tasks").iterdir()).name
+            self.assertEqual(TaskStore(output_root).get(task_id).stage, TaskStage.AWAITING_HOST_ANALYSIS)
 
-    def test_successful_vault_export_cleans_local_task_by_default(self):
+            final_note = task_dir / "video" / "测试视频-2026-07-25.md"
+            final_note.write_text("# 最终学习卡片", encoding="utf-8")
+            module.finalize_host_analysis(output_root, task_id, final_note)
+            record = TaskStore(output_root).get(task_id)
+            self.assertEqual(record.stage, TaskStage.COMPLETED)
+            self.assertEqual(record.metadata["final_markdown_path"], str(final_note.resolve()))
+
+    def test_host_finalizer_records_vault_note(self):
         module = _load_cli_module()
         with tempfile.TemporaryDirectory() as tmp:
             output_root = Path(tmp) / "output"
@@ -182,21 +181,73 @@ class CliTaskIntegrationTests(unittest.TestCase):
                 return summary
 
             module.run_douyin = fake_extract
-            module.generate_structured_analysis = lambda *_args: module.StructuredAnalysis(
-                category="测试", tags=["抖音"], summary="总结", rating="4",
-                highlights=[{"time": "00:01", "text": "要点", "evidence": "原始证据文本"}],
-            )
             env = module.NetworkEnv()
             env.bilibili_ok = True
-            env.obsidian_vault = str(vault)
-
             self.assertTrue(module.process_single(url, env, output_root, resolve_short_links=False))
 
             task_id = hashlib.md5(url.encode()).hexdigest()[:12]
             task_dir = output_root / "_tasks" / task_id
+            final_note = task_dir / "video" / "测试视频-2026-07-25.md"
+            final_note.write_text("# 最终学习卡片", encoding="utf-8")
+            vault_note = vault / "数字人创建.md"
+            vault.mkdir()
+            vault_note.write_text("# 最终学习卡片", encoding="utf-8")
+            module.finalize_host_analysis(output_root, task_id, final_note, vault_note)
             record = TaskStore(output_root).get(task_id)
-            self.assertFalse(task_dir.exists())
+            self.assertTrue(task_dir.exists())
             self.assertIsNotNone(record)
             assert record is not None
-            self.assertTrue(record.metadata["local_artifacts_cleaned"])
-            self.assertTrue(Path(record.metadata["vault_note_path"]).is_file())
+            self.assertTrue(record.metadata["imported"])
+            self.assertEqual(Path(record.metadata["vault_note_path"]), vault_note.resolve())
+
+    def test_output_root_owns_its_registry(self):
+        module = _load_cli_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first"
+            second = Path(tmp) / "second"
+            module.configure_output_root(first)
+            module.mark_processed("https://example.com/video/1", "first.md")
+            module.configure_output_root(second)
+            self.assertFalse(module.is_duplicate("https://example.com/video/1"))
+
+    def test_cli_finalizer_completes_waiting_task(self):
+        module = _load_cli_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "output"
+            store = TaskStore(output_root)
+            store.create_or_resume(
+                task_id="finalize123", raw_input="分享文案",
+                canonical_url="https://example.com/video/1", platform="douyin",
+            )
+            store.transition("finalize123", TaskStage.AWAITING_HOST_ANALYSIS)
+            final_note = output_root / "_tasks" / "finalize123" / "主题-2026-07-25.md"
+            final_note.write_text("# 最终学习卡片", encoding="utf-8")
+
+            with patch.object(sys, "argv", [
+                "zhixi-learn.py", "--out", str(output_root), "--finalize-task", "finalize123",
+                "--final-markdown", str(final_note),
+            ]):
+                module.main()
+
+            self.assertEqual(TaskStore(output_root).get("finalize123").stage, TaskStage.COMPLETED)
+
+    def test_relearn_creates_a_fresh_task_for_the_same_url(self):
+        module = _load_cli_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            output_root = Path(tmp) / "output"
+            module.ensure_ffmpeg = lambda: None
+            module.save_progress = lambda *_args, **_kwargs: None
+            module.is_duplicate = lambda _url: False
+
+            def fake_extract(_url, task_dir, _with_frames):
+                summary = Path(task_dir) / "video" / "summary.md"
+                summary.parent.mkdir(parents=True, exist_ok=True)
+                summary.write_text('---\ntitle: "测试视频"\n---\n', encoding="utf-8")
+                return summary
+
+            module.run_douyin = fake_extract
+            env = module.NetworkEnv()
+            url = "https://www.douyin.com/video/7345678901234567890"
+            self.assertTrue(module.process_single(url, env, output_root, resolve_short_links=False, relearn=True))
+            self.assertTrue(module.process_single(url, env, output_root, resolve_short_links=False, relearn=True))
+            self.assertEqual(len(list((output_root / "_tasks").iterdir())), 2)

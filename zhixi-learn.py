@@ -5,7 +5,8 @@ Zhixi-Learn Skill (知析) — Universal Video/Audio → Knowledge Base Import
 One command: URL → extract → AI structured analysis → import to your note system.
 
 Usage:
-    python zhixi-learn.py "<url>" [<url2> ...] [--frames] [--out DIR] [--no-import] [--dry-run]
+    python zhixi-learn.py "<url>" [<url2> ...] [--frames] [--out DIR] [--relearn] [--no-import] [--dry-run]
+    python zhixi-learn.py --finalize-task TASK_ID --final-markdown FILE [--vault-note FILE] [--out DIR]
 
 Supports: Douyin, TikTok, Bilibili, YouTube, podcasts, local files (auto-detects network).
 Outputs: SiYuan (auto-start), Obsidian vault, or plain local markdown.
@@ -14,7 +15,8 @@ Outputs: SiYuan (auto-start), Obsidian vault, or plain local markdown.
 ══════════════════════════════════════
 一条命令：链接 → 内容提取 → AI 结构化分析 → 导入笔记系统。
 
-    用法: python zhixi-learn.py "<链接>" [<链接2> ...] [--frames] [--out 目录] [--no-import] [--dry-run]
+    用法: python zhixi-learn.py "<链接>" [<链接2> ...] [--frames] [--out 目录] [--relearn] [--no-import] [--dry-run]
+          python zhixi-learn.py --finalize-task TASK_ID --final-markdown 文件 [--vault-note 文件] [--out 目录]
 
     支持: 抖音、TikTok、B站、YouTube、播客、本地文件（自动检测网络环境）。
     输出: 思源笔记（自动启动）、Obsidian、或纯本地 Markdown。
@@ -108,6 +110,15 @@ _configured_output_root = os.environ.get("LEARN_OUTPUT", "").strip()
 DEFAULT_OUT = Path(_configured_output_root).expanduser() if _configured_output_root else PROJECT_ROOT / "learn-output"
 REGISTRY_FILE = DEFAULT_OUT / ".registry.json"
 PROGRESS_FILE = DEFAULT_OUT / ".progress.json"
+
+
+def configure_output_root(output_root: Path) -> Path:
+    """Bind legacy registry/progress helpers to the effective CLI output root."""
+    global DEFAULT_OUT, REGISTRY_FILE, PROGRESS_FILE
+    DEFAULT_OUT = Path(output_root).expanduser().resolve()
+    REGISTRY_FILE = DEFAULT_OUT / ".registry.json"
+    PROGRESS_FILE = DEFAULT_OUT / ".progress.json"
+    return DEFAULT_OUT
 
 # ── Unified Timeouts / 统一超时 ──────────────────────────────────────────────
 TIMEOUT_WHISPER = 1200    # 本地 Whisper 转写（秒）
@@ -352,6 +363,47 @@ def mark_processed(url: str, output_path: str, metadata: Dict = None):
         "metadata": metadata or {},
     }
     save_registry(reg)
+
+
+def finalize_host_analysis(
+    output_root: Path,
+    task_id: str,
+    final_markdown: Path,
+    vault_note_path: Optional[Path] = None,
+) -> None:
+    """Record the host-produced learning card as the only completed result."""
+    configure_output_root(output_root)
+    final_markdown = Path(final_markdown).resolve()
+    if not final_markdown.is_file():
+        raise FileNotFoundError(f"最终 Markdown 不存在: {final_markdown}")
+
+    store = TaskStore(DEFAULT_OUT)
+    task = store.get(task_id)
+    if task is None:
+        raise KeyError(f"未知任务: {task_id}")
+    if task.stage == TaskStage.COMPLETED:
+        raise RuntimeError(f"任务已完成，拒绝覆盖: {task_id}")
+
+    vault_note = Path(vault_note_path).resolve() if vault_note_path else None
+    if vault_note and not vault_note.is_file():
+        raise FileNotFoundError(f"Vault 笔记不存在: {vault_note}")
+    final_path = str(vault_note or final_markdown)
+    imported = vault_note is not None
+    mark_processed(task.canonical_url, final_path, {
+        "title": final_markdown.stem,
+        "platform": task.platform,
+        "raw_input": task.raw_input,
+        "final_markdown_path": str(final_markdown),
+        "host_finalized": True,
+    })
+    store.complete(task_id, data={
+        "final_markdown_path": str(final_markdown),
+        "note_path": final_path,
+        "imported": imported,
+        "vault_note_path": str(vault_note or ""),
+        "host_finalized": True,
+        "local_artifacts_cleaned": False,
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1479,6 +1531,7 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
                    with_frames: bool = False, no_import: bool = False,
                    extract_only: bool = False, resolve_short_links: bool = True,
                    keep_local: bool = False,
+                   relearn: bool = False,
                    skill_state: Optional[SkillState] = None) -> bool:
     """Process one copied link/message after normalizing it to a content URL."""
     try:
@@ -1494,7 +1547,8 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
             print(f"   已移除追踪参数: {', '.join(link.removed_params)}")
         if link.resolution_error:
             print(f"   ⚠ 短链未解析，继续使用原短链: {link.resolution_error}")
-    task_id = hashlib.md5(url.encode()).hexdigest()[:12]
+    task_seed = url if not relearn else f"{url}|{datetime.now().isoformat()}"
+    task_id = hashlib.md5(task_seed.encode()).hexdigest()[:12]
     consecutive_failures = 0  # 同一 URL 连续失败计数
 
     platform = detect_platform(url)
@@ -1519,9 +1573,9 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
     task_store = TaskStore(out_dir)
     task = task_store.create_or_resume(
         task_id=task_id, raw_input=raw_input, canonical_url=url, platform=platform,
-        metadata={"link_normalization": link.to_dict()},
+        metadata={"link_normalization": link.to_dict(), "relearn": relearn},
     )
-    if is_duplicate(url):
+    if not relearn and is_duplicate(url):
         if task.stage != TaskStage.COMPLETED:
             task_store.skip(task_id, "legacy_registry_completed")
         print(f"⏭ 跳过(已处理): {url}")
@@ -1565,6 +1619,8 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
                     "douyin", success=bool(md_path), method=extraction_method,
                     error=extraction_error, cookie_issue=cookie_issue,
                 )
+                if md_path and extraction_method == "playwright_intercept":
+                    print("  ✅ yt-dlp 受 Cookie 限制，Playwright 媒体捕获成功")
             else:
                 md_path = run_douyin(url, task_dir, with_frames)
             # 抖音兜底：如果 extract_douyin 失败，用 yt-dlp + whisper 直接下载
@@ -1607,114 +1663,13 @@ def process_single(raw_input: str, env: NetworkEnv, out_dir: Path,
         print(f"✅ 提取完成 (extract-only) → {md_path}")
         return True
 
-    # Read content / 读取内容
-    md_content = md_path.read_text(encoding="utf-8")
-    title_match = re.search(r"^title:\s*\"(.+?)\"", md_content, re.MULTILINE)
-    if not title_match:
-        title_match = re.search(r"^#\s+(.+)$", md_content, re.MULTILINE)
-    title = title_match.group(1) if title_match else md_path.stem
-
-    # ── AI 分析：统一调用（取代旧的6步串行链）──
-    save_progress(task_id, "ai_analysis")
-    task_store.transition(task_id, TaskStage.ANALYZING)
-    transcript_text = transcript_for_analysis(md_path, md_content)
-    
-    ai_result = generate_structured_analysis(title, transcript_text)
-    save_progress(task_id, "ai_analysis", {"verification": ai_result.verification})
-    analysis_path = md_path.parent / "analysis.json"
-    analysis_path.write_text(json.dumps({
-        "category": ai_result.category, "tags": ai_result.tags, "summary": ai_result.summary,
-        "chapters": ai_result.chapters, "highlights": ai_result.highlights,
-        "glossary": ai_result.glossary, "flashcards": ai_result.flashcards,
-        "deep_questions": ai_result.deep_questions, "rating": ai_result.rating,
-        "rating_detail": ai_result.rating_detail, "verification": ai_result.verification,
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
-    task_store.transition(task_id, TaskStage.ANALYZED, data={"analysis_path": str(analysis_path)})
-    
-    # ── Knowledge Graph / 知识图谱 ──
-    related_notes = build_related_notes(ai_result.tags, title)
-    
-    # ── 重新组装完整 Markdown ──
-    try:
-        _write_summary(
-            md_path=md_path, url=url, platform=platform,
-            title=title, author=author_from_md(md_content),
-            duration_sec=duration_from_md(md_content),
-            transcript_path=None,
-            transcript_text=transcript_text,
-            category=ai_result.category, tags=ai_result.tags,
-            summary=ai_result.summary,
-            chapters=attach_visual_evidence(ai_result.chapters, md_path.parent),
-            highlights=ai_result.highlights,
-            deep_thinking=ai_result.deep_questions,
-            glossary=ai_result.glossary,
-            rating=ai_result.rating,
-            rating_detail=ai_result.rating_detail,
-            flashcards=ai_result.flashcards,
-            related_notes=related_notes,
-            task_id=task_id,
-            include_transcript=False,
-        )
-    except Exception as e:
-        task_store.fail(task_id, str(e), data={"during": "markdown_render"})
-        print(f"❌ Markdown 组装失败: {e}")
-        return False
-
-    # ── Import / 导入 ──
-    imported = False
-    vault_note_path: Optional[Path] = None
-    if not no_import:
-        save_progress(task_id, "importing")
-        task_store.transition(task_id, TaskStage.EXPORTING)
-
-        # Obsidian is the primary, portable Markdown vault for this pipeline.
-        if env.obsidian_vault:
-            vault_note_path = export_to_obsidian(md_path, env.obsidian_vault)
-            imported = vault_note_path is not None
-
-        # SiYuan remains an optional fallback for users who configure it.
-        if not imported and env.has_siyuan:
-            if not env.siyuan_running:
-                env.siyuan_running = ensure_siyuan_running()
-            if env.siyuan_running:
-                imported = import_to_siyuan(md_path, title)
-
-    # The task directory is the canonical local copy.  Do not flatten every
-    # note into the output root, where identical summary.md names collide.
-    if not imported:
-        print(f"  💾 已保存本地: {md_path}")
-
-    # Mark processed / 标记已处理（含评分和错误记录）
-    final_note_path = str(vault_note_path or md_path)
-    mark_processed(url, final_note_path, {
-        "title": title,
-        "platform": platform,
-        "raw_input": raw_input,
-        "resolved_url": link.resolved_url or "",
-        "removed_tracking_params": list(link.removed_params),
-        "verification": ai_result.verification,
-        "category": ai_result.category,
-        "tags": ai_result.tags,
-        "rating": ai_result.rating,
-        "consecutive_failures": 0,
-        "has_highlights": bool(ai_result.highlights),
-        "has_glossary": bool(ai_result.glossary),
-        "has_chapters": bool(ai_result.chapters),
-        "has_flashcards": bool(ai_result.flashcards),
+    task_store.transition(task_id, TaskStage.AWAITING_HOST_ANALYSIS, data={
+        "transcript_path": str(md_path.parent / "transcript.txt"),
+        "summary_path": str(md_path),
+        "next_action": "finalize_host_analysis",
     })
-    cleaned = bool(imported and vault_note_path and not keep_local)
-    task_store.complete(task_id, data={
-        "note_path": final_note_path,
-        "imported": imported,
-        "vault_note_path": final_note_path if vault_note_path else "",
-        "local_artifacts_cleaned": cleaned,
-    })
-    if cleaned:
-        cleanup_task_workspace(task_dir, out_dir)
-
-    print(f"✅ 完成 → {final_note_path}")
+    print(f"⏳ 已提取，等待宿主分析并最终化 → {md_path}")
     return True
-
 
 def main():
     if len(sys.argv) < 2:
@@ -1723,9 +1678,12 @@ def main():
 
     # Parse flags / 解析参数
     urls = []
-    with_frames = False; no_import = False; dry_run = False; extract_only = False; out_dir = DEFAULT_OUT
+    with_frames = False; no_import = False; dry_run = False; extract_only = False; relearn = False; out_dir = DEFAULT_OUT
     resolve_short_links = True
     keep_local = False
+    finalize_task_id = ""
+    final_markdown = ""
+    vault_note = ""
 
     i = 1
     while i < len(sys.argv):
@@ -1742,17 +1700,41 @@ def main():
             resolve_short_links = False
         elif a == "--keep-local":
             keep_local = True
+        elif a == "--relearn":
+            relearn = True
+        elif a == "--finalize-task" and i + 1 < len(sys.argv):
+            i += 1; finalize_task_id = sys.argv[i]
+        elif a == "--final-markdown" and i + 1 < len(sys.argv):
+            i += 1; final_markdown = sys.argv[i]
+        elif a == "--vault-note" and i + 1 < len(sys.argv):
+            i += 1; vault_note = sys.argv[i]
         elif a == "--out" and i + 1 < len(sys.argv):
             i += 1; out_dir = Path(sys.argv[i])
         elif not a.startswith("--"):
             urls.append(a)
         i += 1
 
-    if not urls:
+    if finalize_task_id and not final_markdown:
+        print("❌ --finalize-task 需要 --final-markdown")
+        sys.exit(1)
+    if not finalize_task_id and not urls:
         print("❌ 请提供至少一个链接")
         sys.exit(1)
 
+    out_dir = configure_output_root(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if finalize_task_id:
+        try:
+            finalize_host_analysis(
+                out_dir, finalize_task_id, Path(final_markdown),
+                Path(vault_note) if vault_note else None,
+            )
+        except (FileNotFoundError, KeyError, RuntimeError) as error:
+            print(f"❌ 最终化失败: {error}")
+            sys.exit(1)
+        print(f"✅ 宿主分析已最终化 → {final_markdown}")
+        return
 
     skill_state = SkillState(out_dir)
     environment_report = skill_state.check_environment()
@@ -1799,7 +1781,7 @@ def main():
     for raw_input in urls:
         if process_single(
             raw_input, env, out_dir, with_frames, no_import, extract_only,
-            resolve_short_links, keep_local, skill_state,
+            resolve_short_links, keep_local, relearn=relearn, skill_state=skill_state,
         ):
             success += 1
         else:
